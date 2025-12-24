@@ -84,17 +84,20 @@ async function getUserActivity(userEmail, startDate, endDate) {
 
     // 1. Construct Query
     // CHANGED: Search "All Mail" (including Archived), excluding Trash/Spam/Drafts.
+    // CHANGED: Use native YYYY/MM/DD for better timezone handling (respects mailbox timezone)
     let query = '-in:trash -in:spam -in:drafts';
 
     if (startDate) {
-        // Use 'after:' with Epoch Seconds for precision
-        const startEpoch = getEasternEpoch(startDate, false);
-        query += ` after:${startEpoch}`;
+        // YYYY-MM-DD -> YYYY/MM/DD
+        const startStr = startDate.replace(/-/g, '/');
+        query += ` after:${startStr}`;
     }
     if (endDate) {
-        // Use 'before:' with Epoch Seconds (Next Day Midnight)
-        const endEpoch = getEasternEpoch(endDate, true);
-        query += ` before:${endEpoch}`;
+        // Increment End Date by 1 day to make it inclusive (because 'before:' is exclusive)
+        const d = new Date(endDate);
+        d.setDate(d.getDate() + 1);
+        const nextDay = d.toISOString().split('T')[0].replace(/-/g, '/');
+        query += ` before:${nextDay}`;
     }
 
     console.log(`[Query] ${userEmail}: ${query}`);
