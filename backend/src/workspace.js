@@ -182,6 +182,9 @@ async function getUserActivity(userEmail, startDate, endDate) {
         }));
     }
 
+    // Sort by Date Descending (Newest First)
+    detailedEmails.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
     return detailedEmails;
 }
 
