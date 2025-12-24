@@ -242,10 +242,13 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
                 .filter(part => part.filename && part.filename.length > 0)
                 .map(part => part.filename);
 
-            // CHANGED: Count ANY file as a Resume/Submission per user request
-            if (files.length > 0) {
+            // Filter by keywords
+            const keywords = ['resume', 'cv', 'profile', 'candidate', 'submission'];
+            const validResumes = files.filter(name => keywords.some(k => name.toLowerCase().includes(k)));
+
+            if (validResumes.length > 0) {
                 hasResume = true;
-                resumeFiles.push(...files);
+                resumeFiles.push(...validResumes);
             }
         }
 
@@ -359,10 +362,16 @@ function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     // Check for Attachments (Resumes)
     let resumeFiles = [];
     if (payload.parts) {
+        // Keywords to identify a Resume/Submission
+        const keywords = ['resume', 'cv', 'profile', 'candidate', 'submission'];
+
         resumeFiles = payload.parts
             .filter(part => part.filename && part.filename.length > 0)
-            .map(part => part.filename);
-        // CHANGED: Accept ANY file
+            .map(part => part.filename)
+            .filter(name => {
+                const lowerName = name.toLowerCase();
+                return keywords.some(k => lowerName.includes(k));
+            });
     }
 
     // Detect if Sent or Inbox
