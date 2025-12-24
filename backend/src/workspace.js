@@ -223,7 +223,8 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         // If *any* message was sent by us, the thread has "Sent" activity.
         // If *any* message is Inbox, it has "Inbox" activity.
         if (labelIds.includes('SENT')) isSent = true;
-        else isInbox = true; // Roughly, if not sent, it's received
+        // Strict Inbox Check: Only if textually labeled 'INBOX'
+        if (labelIds.includes('INBOX')) isInbox = true;
     });
 
     const result = {
@@ -319,9 +320,8 @@ function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     // Detect if Sent or Inbox
     const labelIds = messageData.labelIds || [];
     const isSent = labelIds.includes('SENT');
-    // CHANGED: "Inbox" now means ANYTHING received (not just label:INBOX).
-    // If it wasn't sent by us, it was received.
-    const isInbox = !isSent;
+    // CHANGED: Strict Inbox check.
+    const isInbox = labelIds.includes('INBOX');
 
     // Check for RTR
     // 1. Subject Check
