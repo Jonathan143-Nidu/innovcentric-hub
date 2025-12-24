@@ -240,8 +240,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         if (p.parts) {
             const files = p.parts
                 .filter(part => part.filename && part.filename.length > 0)
-                .map(part => part.filename)
-                .filter(name => name.toLowerCase().includes('resume') || name.toLowerCase().includes('cv'));
+                .map(part => part.filename);
+
+            // CHANGED: Count ANY file as a Resume/Submission per user request
             if (files.length > 0) {
                 hasResume = true;
                 resumeFiles.push(...files);
@@ -360,8 +361,8 @@ function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     if (payload.parts) {
         resumeFiles = payload.parts
             .filter(part => part.filename && part.filename.length > 0)
-            .map(part => part.filename)
-            .filter(name => name.toLowerCase().includes('resume') || name.toLowerCase().includes('cv'));
+            .map(part => part.filename);
+        // CHANGED: Accept ANY file
     }
 
     // Detect if Sent or Inbox
