@@ -152,4 +152,5 @@ app.get(/(.*)/, (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
+    console.log("Verification: v2.5 Online (500 limit, Real Sender Names)");
 });
