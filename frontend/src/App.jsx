@@ -101,11 +101,12 @@ function App() {
               // Inbox
               if (email.analysis && email.analysis.is_inbox) {
                 allInbox.push({
+                  timestamp: email.updated_at || email.timestamp, // Store raw for sorting
                   date: new Date(email.updated_at || email.timestamp).toLocaleString(), // Local Time
-                  sender: email.from, // Real Sender Name
-                  subject: email.subject, // Extracted Role
-                  replied: email.analysis.is_replied,
-                  summary: email.summary
+                  sender: email.analysis.sender_name || "Unknown",
+                  subject: email.analysis.role_display || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
+                  replied: email.analysis.replied ? "Yes" : "No",
+                  summary: email.analysis.summary || email.snippet || ""
                 });
               }
 
