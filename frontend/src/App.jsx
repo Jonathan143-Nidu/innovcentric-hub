@@ -106,7 +106,7 @@ function App() {
                   sender: email.analysis.sender_name || "Unknown",
                   subject: email.analysis.role_display || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
                   replied: email.analysis.replied ? "Yes" : "No",
-                  summary: email.analysis.summary || email.snippet || ""
+                  summary: `[${email.updated_at || email.timestamp}] ` + (email.analysis.summary || email.snippet || "")
                 });
               }
 
@@ -140,10 +140,15 @@ function App() {
           }
         });
 
-
-
-        // FORCE SORT: Ensure Inbox is sorted by Date (Newest First) using RAW timestamp
-        allInbox.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        // FORCE SORT: Robust Sorting with NaN checks
+        allInbox.sort((a, b) => {
+          const tA = new Date(a.timestamp).getTime();
+          const tB = new Date(b.timestamp).getTime();
+          // Move Invalid Dates to bottom
+          if (isNaN(tA)) return 1;
+          if (isNaN(tB)) return -1;
+          return tB - tA; // Descending (Newest First)
+        });
 
         setInboxList(allInbox);
         setRtrList(allRTRs);
