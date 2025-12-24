@@ -182,22 +182,45 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     const messages = threadData.messages || [];
     if (messages.length === 0) return null;
 
-    // Get latest message for display dates/subjects
-    const latestMsg = messages[messages.length - 1];
-    const payload = latestMsg.payload || {};
+    // FIND THE "PRIMARY" MESSAGE (The one we received, to get Sender/Subject)
+    // We look for the first message that is NOT sent by us.
+    // If all are sent by us (e.g. we started thread), use the first one.
+    const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
+
+    const payload = primaryMsg.payload || {};
     const headers = payload.headers || [];
 
-    const subject = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
-    const dateStr = headers.find(h => h.name === 'Date')?.value;
+    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
+    // Parse From header: "Name <email>" -> "Name"
+    const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
+    const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
+
+    // Date: Normalized to ISO
+    const dateRaw = headers.find(h => h.name === 'Date')?.value;
+    const timestamp = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
+
+    // Summary (Snippet)
+    const summary = primaryMsg.snippet || "";
 
     // Aggregate Statuses across the whole thread
     let hasResume = false;
     let isRtr = false;
     let isSent = false;
     let isInbox = false;
+    let replied = false; // "Replied Status"
     let resumeFiles = [];
 
-    // Check all messages in the thread
+    // Analyze thread for statuses
+    // Check if WE replied: If there is a SENT message AFTER a RECEIVED message? 
+    // Simplify: If thread contains both SENT and RECEIVED, we likely replied or they replied.
+    // Strict "Replied": If we have a SENT message.
+    const hasSentMsg = messages.some(m => m.labelIds.includes('SENT'));
+    const hasReceivedMsg = messages.some(m => !m.labelIds.includes('SENT'));
+    if (hasSentMsg && hasReceivedMsg) {
+        replied = true;
+    }
+
+    // Check all messages in the thread for flags
     messages.forEach(msg => {
         const p = msg.payload || {};
         const labelIds = msg.labelIds || [];
@@ -214,30 +237,49 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
             }
         }
 
-        // RTR Check (Subject or Label on ANY message)
+        // RTR Check
         const sub = (p.headers?.find(h => h.name === 'Subject')?.value || '').toLowerCase();
         if (sub.includes('rtr') || sub.includes('right to represent')) isRtr = true;
         if (labelIds.some(id => rtrLabelIds.has(id))) isRtr = true;
 
-        // Inbox/Sent Logic for Thread:
-        // If *any* message was sent by us, the thread has "Sent" activity.
-        // If *any* message is Inbox, it has "Inbox" activity.
         if (labelIds.includes('SENT')) isSent = true;
-        // Strict Inbox Check: Only if textually labeled 'INBOX'
+
+        // Strict Inbox Check (as requested previously)
         if (labelIds.includes('INBOX')) isInbox = true;
     });
 
+    // ROLE EXTRACTION
+    let roleDisplay = subjectRaw;
+    if (isRtr) {
+        roleDisplay = "RTR";
+    } else {
+        // Simple Heuristic: Remove "Fwd:", "Re:", split by common separators
+        let clean = subjectRaw.replace(/^(Fwd|Re|Aw|Fw):\s*/i, '').trim();
+        // Take part before first dash, pipe, or colon if sensible length
+        // Regex: Match text until -, |, : or end.
+        const match = clean.match(/^([^|\-:]+)/);
+        if (match && match[1] && match[1].length < 50) { // arbitrary length check
+            roleDisplay = match[1].trim();
+        } else {
+            roleDisplay = clean;
+        }
+    }
+
     const result = {
-        id: threadData.id, // Use Thread ID
-        timestamp: dateStr || new Date().toISOString(),
-        subject: subject,
-        from: "Thread View", // Placeholder
+        id: threadData.id,
+        timestamp: timestamp,
+        subject: roleDisplay, // User asked for "Role only"
+        original_subject: subjectRaw, // Keep original available
+        from: fromName,
+        summary: summary,
+        updated_at: timestamp,
         analysis: {
             has_resume: hasResume,
             resume_filenames: [...new Set(resumeFiles)],
             is_rtr: isRtr,
-            is_sent: isSent, // Thread contains sent items
-            is_inbox: isInbox // Thread contains received items
+            is_sent: isSent,
+            is_inbox: isInbox,
+            is_replied: replied
         }
     };
 
@@ -248,20 +290,14 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         // Take last 2 messages for context
         const recentMsgs = messages.slice(-2);
 
-        // This requires getEmailBody helper (assume it exists in scope or passed)
-        // We will do a rough extract here or rely on the loop.
-        // For simplicity in this edit, we skip body extraction here to keep it clean
-        // or we need to move getEmailBody up or duplicate.
-        // Let's assume the previous getEmailBody is available.
-
         recentMsgs.forEach(m => {
             // Use the helper to get the FULL body, not just the snippet
             const bodyPart = getEmailBody(m);
             combinedBody += bodyPart + "\n\n---\n\n";
         });
 
-        console.log(`[AI] Analyzing Thread RTR: ${subject}`);
-        const aiResult = await require('./ai').extractRTRDetails(combinedBody, subject);
+        console.log(`[AI] Analyzing Thread RTR: ${subjectRaw}`);
+        const aiResult = await require('./ai').extractRTRDetails(combinedBody, subjectRaw);
         result.ai_data = aiResult;
     }
 

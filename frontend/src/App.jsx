@@ -101,10 +101,11 @@ function App() {
               // Inbox
               if (email.analysis && email.analysis.is_inbox) {
                 allInbox.push({
-                  date: dateStr,
-                  sender: email.from,
-                  subject: email.subject,
-                  receiver: emp.user // The employee who received it
+                  date: new Date(email.updated_at || email.timestamp).toLocaleString(), // Local Time
+                  sender: email.from, // Real Sender Name
+                  subject: email.subject, // Extracted Role
+                  replied: email.analysis.is_replied,
+                  summary: email.summary
                 });
               }
 
@@ -335,21 +336,28 @@ function App() {
               <thead className="bg-gray-50 text-gray-500 font-medium border-b">
                 <tr>
                   <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">From</th>
-                  <th className="px-6 py-3">Subject</th>
-                  <th className="px-6 py-3">Receiver</th>
+                  <th className="px-6 py-3">Sender Name</th>
+                  <th className="px-6 py-3">Subject (Role)</th>
+                  <th className="px-6 py-3">Replied?</th>
+                  <th className="px-6 py-3">Summary</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {inboxList.length > 0 ? inboxList.map((item, i) => (
                   <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 text-gray-500">{item.date}</td>
+                    <td className="px-6 py-3 text-gray-500 whitespace-nowrap">{item.date}</td>
                     <td className="px-6 py-3 font-medium text-gray-800">{item.sender}</td>
-                    <td className="px-6 py-3 text-gray-600">{item.subject}</td>
-                    <td className="px-6 py-3 text-gray-400">{item.receiver}</td>
+                    <td className="px-6 py-3 text-blue-600 font-medium">{item.subject}</td>
+                    <td className="px-6 py-3">
+                      {item.replied ?
+                        <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs">Yes</span> :
+                        <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded text-xs">No</span>
+                      }
+                    </td>
+                    <td className="px-6 py-3 text-gray-500 max-w-xs truncate" title={item.summary}>{item.summary}</td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-400">No inbox data found.</td></tr>
+                  <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-400">No inbox data found.</td></tr>
                 )}
               </tbody>
             </table>
