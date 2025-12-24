@@ -254,8 +254,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         // Let's assume the previous getEmailBody is available.
 
         recentMsgs.forEach(m => {
-            // simplified body extract for now
-            combinedBody += (m.snippet || "") + "\n\n";
+            // Use the helper to get the FULL body, not just the snippet
+            const bodyPart = getEmailBody(m);
+            combinedBody += bodyPart + "\n\n---\n\n";
         });
 
         console.log(`[AI] Analyzing Thread RTR: ${subject}`);
