@@ -11,7 +11,7 @@ on:
 env:
   PROJECT_ID: innov-admin-hub
   region: us-central1
-  SERVICE_NAME: innovcentric-hub
+  SERVICE_NAME: workspace-collector
 
 jobs:
   deploy:
