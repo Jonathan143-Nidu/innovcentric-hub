@@ -146,33 +146,38 @@ async function getUserActivity(userEmail, startDate, endDate) {
     console.log(`  - Unique Threads: ${threadMap.size}`);
 
     // Process each thread to find the "Best" representative message for each category
-    // or just aggregate the thread logic.
-    // LIMIT: Process restricted number of threads to prevent timeouts.
-    const threads = Array.from(threadMap.values()).slice(0, 50); // Process latest 50 threads only for speed
+    // LIMIT: Increased to 500 to capture more data.
+    const threadsToProcess = Array.from(threadMap.values()).slice(0, 500);
 
-    await Promise.all(threads.map(async (threadMsgs) => {
-        // We typically want the LATEST message in the thread to get current status
-        // But we might need to scan the whole thread to see if *any* message has a Resume or RTR.
+    // Batch processing to avoid Gmail Rate Limits (Chunk size: 10)
+    const chunkSize = 10;
+    for (let i = 0; i < threadsToProcess.length; i += chunkSize) {
+        const chunk = threadsToProcess.slice(i, i + chunkSize);
 
-        // Let's just grab the FULL thread details from Google to get the whole conversation context
-        // This is expensive but accurate.
-        const threadId = threadMsgs[0].threadId;
+        await Promise.all(chunk.map(async (threadMsgs) => {
+            // We typically want the LATEST message in the thread to get current status
+            // But we might need to scan the whole thread to see if *any* message has a Resume or RTR.
 
-        try {
-            const threadDetails = await gmail.users.threads.get({
-                userId: 'me',
-                id: threadId,
-                format: 'full'
-            });
+            // Let's just grab the FULL thread details from Google to get the whole conversation context
+            // This is expensive but accurate.
+            const threadId = threadMsgs[0].threadId;
 
-            // Analyze the Thread as a Whole
-            const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient);
-            if (analysis) detailedEmails.push(analysis);
+            try {
+                const threadDetails = await gmail.users.threads.get({
+                    userId: 'me',
+                    id: threadId,
+                    format: 'full'
+                });
 
-        } catch (e) {
-            console.error(`Error fetching thread ${threadId}: ${e.message}`);
-        }
-    }));
+                // Analyze the Thread as a Whole
+                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient);
+                if (analysis) detailedEmails.push(analysis);
+
+            } catch (e) {
+                console.error(`Error fetching thread ${threadId}: ${e.message}`);
+            }
+        }));
+    }
 
     return detailedEmails;
 }
