@@ -94,8 +94,9 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
     console.log(`[Query] ${userEmail}: ${query} | PageToken: ${pageToken ? 'Yes' : 'No'}`);
 
-    let allMessages = [];
+    const allMessages = [];
     let nextToken = null;
+    let totalEstimate = 0;
 
     // 2. Single Page Fetch (Batch Wise)
     try {
@@ -108,7 +109,8 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
         allMessages = res.data.messages || [];
         nextToken = res.data.nextPageToken || null;
-        console.log(`  - Page Fetched: ${allMessages.length} messages.`);
+        totalEstimate = res.data.resultSizeEstimate || 0;
+        console.log(`  - Page Fetched: ${allMessages.length} messages. Estimate: ${totalEstimate}`);
 
     } catch (e) {
         console.error(`Error listing messages for ${userEmail}:`, e.message);
@@ -167,7 +169,7 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
     // Attach Meta Stats
-    detailedEmails.meta = { fetched: allMessages.length, nextToken };
+    detailedEmails.meta = { fetched: allMessages.length, nextToken, total: totalEstimate };
 
     return detailedEmails;
 }

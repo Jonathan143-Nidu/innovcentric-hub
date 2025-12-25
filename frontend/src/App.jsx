@@ -55,6 +55,7 @@ function App() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1); // Track current page for "1-100 of X" display
   const [stats, setStats] = useState({});
   const [error, setError] = useState(null); // For "All Users" summary
 
@@ -100,6 +101,7 @@ function App() {
     setLoading(true);
     // Only reset lists if it's a fresh search (no pageToken)
     if (!pageToken) {
+      setPage(1);
       setInboxList([]);
       setResumeList([]);
       setRtrList([]);
