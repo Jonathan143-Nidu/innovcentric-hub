@@ -208,7 +208,17 @@ app.get(/(.*)/, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// DEBUG: Expose source code to verify deployment version
+app.get('/debug/source', (req, res) => {
+    try {
+        if (!getUserActivity) return res.send("getUserActivity is not loaded.");
+        res.send(`<pre>${getUserActivity.toString()}</pre>`);
+    } catch (e) {
+        res.send(e.message);
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-    console.log("Verification: v5.18 Online (Clean Inbox Logic - No Variables)");
+    console.log("Verification: v5.19 Online (Debug Source Route Active)");
 });
