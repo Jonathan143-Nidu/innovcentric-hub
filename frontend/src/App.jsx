@@ -104,7 +104,7 @@ function App() {
     setRtrList([]);
 
     try {
-      const response = await fetch(`/collect-data`, {
+      const response = await fetch('/collect', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -116,6 +116,11 @@ function App() {
           targetEmail: selectedUser === 'all' ? 'All Users' : selectedUser
         })
       });
+
+      if (!response.ok) {
+        throw new Error(`Server Error: ${response.statusText}`);
+      }
+
       const data = await response.json();
 
       if (data.success) {
@@ -210,13 +215,14 @@ function App() {
         alert("Data Updated!");
 
       } else {
-        alert("Error: " + result.error);
+        alert("Error: " + data.error);
       }
-    } catch (error) {
-      console.error(error);
-      alert("Connection Failed.");
+    } catch (err) {
+      console.error(err);
+      alert(`Data Collection Failed: ${err.message}`);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Login Screen
@@ -503,8 +509,8 @@ function App() {
       </main>
       {/* DEBUG BADGE */}
       {/* VERSION WATERMARK */}
-      <div className="fixed bottom-2 right-4 text-xs text-gray-500 font-mono bg-white/80 px-2 py-1 rounded shadow border border-gray-200">
-        v4.3 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Shown: {stats.analyzed || 0}
+      <div className={`fixed bottom-2 right-4 text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
+        v4.4 | Fetched: {stats.fetched || 0} {stats.limitReached ? '(MAX)' : ''} | Inbox: {stats.inbox || 0} | Shown: {stats.analyzed || 0}
       </div>
     </div>
   );

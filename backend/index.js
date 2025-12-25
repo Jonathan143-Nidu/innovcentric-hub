@@ -139,6 +139,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
         const stats = {
             fetched: allData.meta?.fetched || 0,
             analyzed: allData.length,
+            limitReached: allData.meta?.limitReached || false,
             inbox: allData.filter(e => e.analysis && e.analysis.is_inbox).length
         };
         res.json({ success: true, version: "v4.3", stats, data: allData });
