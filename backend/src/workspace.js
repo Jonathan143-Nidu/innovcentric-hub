@@ -207,8 +207,12 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
 
     // Date: Normalized to ISO
-    const dateRaw = headers.find(h => h.name === 'Date')?.value;
-    const timestamp = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
+    // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
+    // Header 'Date' is unreliable for sorting.
+    const internalDate = parseInt(primaryMsg.internalDate, 10);
+    const timestamp = !isNaN(internalDate)
+        ? new Date(internalDate).toISOString()
+        : (dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString());
 
     // Summary (Snippet)
     const summary = primaryMsg.snippet || "";
