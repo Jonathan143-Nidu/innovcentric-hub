@@ -498,7 +498,10 @@ function App() {
 
       </main>
       {/* DEBUG BADGE */}
-
+      {/* VERSION WATERMARK */}
+      <div className="fixed bottom-2 right-4 text-xs text-gray-400 font-mono">
+        System v4.2 | Backend Connected
+      </div>
     </div>
   );
 }

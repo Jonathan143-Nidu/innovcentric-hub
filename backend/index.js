@@ -136,7 +136,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             }
         }
 
-        res.json({ success: true, data: allData });
+        res.json({ success: true, version: "v4.2", data: allData });
     } catch (error) {
         console.error('Error collecting data:', error);
         res.status(500).json({ error: error.message });

@@ -173,7 +173,7 @@ async function getUserActivity(userEmail, startDate, endDate) {
                 });
 
                 // Analyze the Thread as a Whole
-                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient);
+                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
                 if (analysis) detailedEmails.push(analysis);
 
             } catch (e) {
@@ -189,9 +189,13 @@ async function getUserActivity(userEmail, startDate, endDate) {
 }
 
 // --- Helper: Analyze a Whole Thread ---
-async function analyzeThread(threadData, rtrLabelIds, authClient) {
-    const messages = threadData.messages || [];
+// --- Helper: Analyze a Whole Thread ---
+async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
+    if (!threadData || !threadData.messages) return null;
+    const messages = threadData.messages;
     if (messages.length === 0) return null;
+
+    console.log(`[BACKEND v4.2] Analyzing Thread ${threadData.id}`);
 
     // FIND THE "PRIMARY" MESSAGE (The one we received, to get Sender/Subject)
     // We look for the first message that is NOT sent by us.
@@ -207,7 +211,7 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     if (headers.length === 0) {
         console.log(`[WARN] Thread ${threadData.id} missing headers. Fetching full message ${primaryMsg.id}...`);
         try {
-            const gmail = google.gmail({ version: 'v1', auth: authClient });
+            // Using passed 'gmail' instance for efficiency
             const fullMsg = await gmail.users.messages.get({
                 userId: 'me',
                 id: primaryMsg.id,
