@@ -148,9 +148,11 @@ function App() {
         if (data.stats) setStats(data.stats);
         const rawData = data.data || [];
 
+        let newRows = [];
+
         // 1. Process "All Users" Rows (Only for fresh load usually)
         if (!pageToken) {
-          const newRows = rawData.map(emp => {
+          newRows = rawData.map(emp => {
             if (emp.error) return { name: emp.employee_name, inbox: 0, sent: 0, rtrs: 0, error: emp.error };
             const acts = emp.activities || [];
             return {
@@ -231,16 +233,33 @@ function App() {
           }
         });
 
-        setRtrList(newRtrs);
-        setResumeList(newResumes);
+        if (!pageToken) {
+          setInboxList(newInbox);
+          setRtrList(newRtrs);
+          setResumeList(newResumes);
+        } else {
+          // Append if paginated
+          setInboxList(prev => [...prev, ...newInbox]);
+          // ... others usually don't paginate in this view, but could
+        }
 
         // 3. Totals
-        setTotals({
-          inbox: newRows.reduce((a, b) => a + b.inbox, 0),
-          sent: newRows.reduce((a, b) => a + b.sent, 0),
-          rtrs: newRows.reduce((a, b) => a + b.rtrs, 0),
-          resumes: allResumes.length
-        });
+        // Use newRows (All Users) if available, otherwise sum the lists (Single User)
+        if (newRows.length > 0) {
+          setTotals({
+            inbox: newRows.reduce((a, b) => a + b.inbox, 0),
+            sent: newRows.reduce((a, b) => a + b.sent, 0),
+            rtrs: newRows.reduce((a, b) => a + b.rtrs, 0),
+            resumes: newResumes.length
+          });
+        } else {
+          setTotals({
+            inbox: newInbox.length,
+            sent: newResumes.length, // approximation for sent resumes
+            rtrs: newRtrs.length,
+            resumes: newResumes.length
+          });
+        }
 
         alert("Data Updated!");
 
