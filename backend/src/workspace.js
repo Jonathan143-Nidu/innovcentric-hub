@@ -216,9 +216,12 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
 
     const headerKeys = headers.map(h => h.name);
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
-    // Parse From header: "Name <email>" -> "Name"
+    // Parse From header: "Name <email>" -> Extract Email ID
     const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
-    const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
+    // Regex to extract email inside <...>, or fallback to the raw string if no brackets
+    const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw.replace(/"/g, '').trim();
+    // User requested Email ID instead of Name
+    const fromName = fromEmail;
 
     // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
     // Header 'Date' is unreliable for sorting.
