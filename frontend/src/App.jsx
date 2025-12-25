@@ -117,7 +117,7 @@ function App() {
     }
 
     try {
-      const response = await fetch('/collect', {
+      const response = await fetch('/collect-data', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -551,7 +551,7 @@ function App() {
           </button>
         )}
         <div className={`text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
-          v5.11 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
+          v5.15 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
         </div>
       </div>
     </div>

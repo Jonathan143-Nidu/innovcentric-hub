@@ -2,13 +2,21 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
+// Helper to reliably format errors as strings
+const formatError = (err) => {
+    if (!err) return "Unknown Error (Null/Undefined)";
+    if (typeof err === 'string') return err;
+    if (err.message) return err.message;
+    return JSON.stringify(err);
+};
+
 // Global Crash Handler for Debugging
 process.on('uncaughtException', (err) => {
     console.error('CRITICAL STARTUP ERROR:', err);
     console.error(err.stack);
 });
 
-console.log('Booting innovcentric-hub backend v5.8...');
+console.log('Booting innovcentric-hub backend v5.15...');
 
 const path = require('path');
 
@@ -59,7 +67,7 @@ const verifyGoogleToken = async (req, res, next) => {
         }
     } catch (error) {
         console.error('Token Verification Failed:', error.message);
-        return res.status(401).json({ error: `Unauthorized: ${error.message}` });
+        return res.status(401).json({ error: `Unauthorized: ${formatError(error)}` });
     }
 };
 
@@ -68,13 +76,21 @@ app.get('/health', (req, res) => {
     res.send('innovcentric Workspace Hub Backend is Running 🚀');
 });
 
-const { listAllUsers, getUserActivity } = require('./src/workspace');
-const { getImpersonatedClient } = require('./src/auth');
+// Import Modules Safe Load
+let listAllUsers, getUserActivity, getImpersonatedClient;
+try {
+    ({ listAllUsers, getUserActivity } = require('./src/workspace'));
+    ({ getImpersonatedClient } = require('./src/auth'));
+} catch (e) {
+    console.error("CRITICAL: Failed to load modules:", e);
+}
 
 // --- New Endpoint: Get All Users (for Dropdown) ---
 // PROTECTED BY AUTH
 app.get('/users', verifyGoogleToken, async (req, res) => {
     try {
+        if (!listAllUsers) throw new Error("Backend Module 'workspace.js' failed to load.");
+
         const ADMIN_EMAIL = 'hiring@innovcentric.com';
         const DOMAIN = 'innovcentric.com';
         const users = await listAllUsers(DOMAIN, ADMIN_EMAIL);
@@ -86,7 +102,7 @@ app.get('/users', verifyGoogleToken, async (req, res) => {
         res.json({ success: true, users: simpleUsers });
     } catch (error) {
         console.error("Error fetching users:", error);
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, error: formatError(error) });
     }
 });
 
@@ -94,6 +110,9 @@ app.get('/users', verifyGoogleToken, async (req, res) => {
 // PROTECTED BY AUTH
 app.post('/collect-data', verifyGoogleToken, async (req, res) => {
     try {
+        if (!getImpersonatedClient) throw new Error("Backend Module 'auth.js' failed to load.");
+        if (!getUserActivity) throw new Error("Backend Module 'workspace.js' failed to load.");
+
         console.log('Received request to collect data...');
         const { startDate, endDate, targetEmail } = req.body;
 
@@ -132,7 +151,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
                     return {
                         employee_name: user.name.fullName,
                         employee_email: user.primaryEmail,
-                        error: err.message
+                        error: formatError(err)
                     };
                 }
             });
@@ -174,11 +193,11 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             total: allData.meta?.total // Pass total estimate through
         };
 
-        res.json({ success: true, version: "v5.8", stats, data: allData });
+        res.json({ success: true, version: "v5.15", stats, data: allData });
 
     } catch (error) {
         console.error('Error collecting data:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: formatError(error) });
     }
 });
 
@@ -191,5 +210,5 @@ app.get(/(.*)/, (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-    console.log("Verification: v5.8 Online (Auth Fixed for AuthClient)");
+    console.log("Verification: v5.15 Online (Correct Route & Error Formatting)");
 });
