@@ -223,9 +223,10 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
 
     console.log(`[DEBUG] Headers Found: ${headers.length} | Keys: ${headers.map(h => h.name).join(', ')}`);
 
-    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
+    const headerKeys = headers.map(h => h.name);
+    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || `(No Subject - H:${headers.length})`;
     // Parse From header: "Name <email>" -> "Name"
-    const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
+    const fromRaw = headers.find(h => h.name === 'From')?.value || `Unknown (H:${headers.length} K:${headerKeys.slice(0, 3).join(',')})`;
     const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
 
     // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
