@@ -96,12 +96,16 @@ function App() {
 
 
   // Main Data Collection
-  const handleCollectData = async () => {
+  const handleCollectData = async (pageToken = null) => {
     setLoading(true);
-    // Clear previous
-    setResumeList([]);
-    setInboxList([]);
-    setRtrList([]);
+    // Only reset lists if it's a fresh search (no pageToken)
+    if (!pageToken) {
+      setInboxList([]);
+      setResumeList([]);
+      setRtrList([]);
+      setUserRows([]); // Also reset user rows for a fresh load
+      setTotals({ inbox: 0, sent: 0, rtrs: 0, resumes: 0 }); // Reset totals
+    }
 
     try {
       const response = await fetch('/collect', {
@@ -113,7 +117,8 @@ function App() {
         body: JSON.stringify({
           startDate,
           endDate,
-          targetEmail: selectedUser === 'all' ? 'All Users' : selectedUser
+          targetEmail: selectedUser === 'all' ? 'All Users' : selectedUser,
+          pageToken // Pass token to backend
         })
       });
 
@@ -126,41 +131,54 @@ function App() {
       if (data.success) {
         if (data.stats) setStats(data.stats);
         const rawData = data.data || [];
-        // 1. Process "All Users" Rows
-        const newRows = rawData.map(emp => {
-          if (emp.error) return { name: emp.employee_name, inbox: 0, sent: 0, rtrs: 0, error: emp.error };
-          const acts = emp.activities || [];
-          return {
-            name: emp.employee_name,
-            inbox: acts.filter(a => a.analysis && a.analysis.is_inbox).length,
-            sent: acts.filter(a => a.analysis && a.analysis.is_sent).length,
-            rtrs: acts.filter(a => a.analysis && a.analysis.is_rtr).length
-          };
-        });
-        setUserRows(newRows);
 
-        // 2. Flatten Data for Tabs
-        let allResumes = [];
-        let allInbox = [];
-        let allRTRs = [];
-        const seenIds = new Set(); // Deduplication
+        // 1. Process "All Users" Rows (Only for fresh load usually)
+        if (!pageToken) {
+          const newRows = rawData.map(emp => {
+            if (emp.error) return { name: emp.employee_name, inbox: 0, sent: 0, rtrs: 0, error: emp.error };
+            const acts = emp.activities || [];
+            return {
+              name: emp.employee_name,
+              inbox: acts.filter(a => a.analysis && a.analysis.is_inbox).length,
+              sent: acts.filter(a => a.analysis && a.analysis.is_sent).length,
+              rtrs: acts.filter(a => a.analysis && a.analysis.is_rtr).length
+            };
+          });
+          setUserRows(newRows);
+        }
 
-        result.data.forEach(emp => {
+        // 2. Process Detailed Emails
+        const newInbox = [];
+        const newResumes = [];
+        const newRtrs = [];
+
+        // The backend should return a flat list of emails if targetEmail is specific,
+        // or a list of employees each with activities if targetEmail is 'All Users'.
+        // The provided snippet assumes `rawData` is a list of emails directly.
+        // Let's adapt to the original structure where `rawData` is a list of employees.
+        // If `rawData` is a flat list of emails, the `emp.activities` part needs adjustment.
+        // Assuming `rawData` is `[{ employee_name: '...', activities: [...] }, ...]`.
+
+        const seenIds = new Set(); // Deduplication across all employees in this batch
+
+        rawData.forEach(emp => {
           if (!emp.error && emp.activities) {
             emp.activities.forEach(email => {
               if (seenIds.has(email.id)) return; // Skip duplicates
               seenIds.add(email.id);
 
-              const dateStr = new Date(email.updated_at || email.timestamp).toLocaleString('en-US', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit', second: '2-digit',
-                hour12: true, timeZoneName: 'short'
+              // Date specific filtering/verification (Backend does it, but good to ensure)
+              const date = new Date(email.updated_at || email.timestamp);
+              const dateStr = date.toLocaleString('en-US', {
+                month: '2-digit', day: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+                timeZoneName: 'short'
               });
 
               // Inbox
               if (email.analysis && email.analysis.is_inbox) {
-                allInbox.push({
-                  sort_epoch: email.sort_epoch || new Date(email.updated_at || email.timestamp).getTime(),
+                newInbox.push({
+                  sort_epoch: email.sort_epoch || date.getTime(),
                   date: dateStr,
                   sender: email.from || "Unknown",
                   subject: email.subject || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
@@ -168,26 +186,11 @@ function App() {
                   summary: email.summary || email.snippet || ""
                 });
               }
-
-              // RTR
-              if (email.analysis && email.analysis.is_rtr) {
-                const ai = email.ai_data || {};
-                allRTRs.push({
-                  employer: ai.client || "Unknown",
-                  position: ai.position || email.subject,
-                  candidate: ai.candidate || emp.employee_name,
-                  rate: ai.rate || "N/A",
-                  client: ai.client || "Unknown",
-                  location: ai.location || "Unknown",
-                  vendor: ai.vendor || "-"
-                });
-              }
-
               // Resumes (Sent)
               if (email.analysis && email.analysis.has_resume && email.analysis.is_sent) {
                 email.analysis.resume_filenames.forEach(fname => {
-                  allResumes.push({
-                    sort_epoch: email.sort_epoch || new Date(email.updated_at || email.timestamp).getTime(),
+                  newResumes.push({
+                    sort_epoch: email.sort_epoch || date.getTime(),
                     date: dateStr,
                     to: "Client/Vendor", // simplified
                     position: email.subject,
@@ -196,11 +199,22 @@ function App() {
                   });
                 });
               }
+              // RTR
+              if (email.analysis && email.analysis.is_rtr) {
+                const ai = email.ai_data || {};
+                newRtrs.push({
+                  date: dateStr,
+                  candidate: ai.candidate || emp.employee_name, // Use employee_name if candidate not in AI
+                  role: ai.position || email.subject, // Use email subject if role not in AI
+                  vendor: ai.vendor || "Unknown Vendor",
+                  rate: ai.rate || "N/A",
+                  location: ai.location || "N/A"
+                });
+              }
             });
           }
         });
 
-        setInboxList(allInbox); // No need to pre-sort heavily here if using hooks, but good to have default
         setRtrList(allRTRs);
         setResumeList(allResumes);
 
@@ -509,8 +523,20 @@ function App() {
       </main>
       {/* DEBUG BADGE */}
       {/* VERSION WATERMARK */}
-      <div className={`fixed bottom-2 right-4 text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
-        v4.4 | Fetched: {stats.fetched || 0} {stats.limitReached ? '(MAX)' : ''} | Inbox: {stats.inbox || 0} | Shown: {stats.analyzed || 0}
+      {/* VERSION WATERMARK & LOAD MORE */}
+      <div className="fixed bottom-2 right-4 flex gap-2 items-center">
+        {stats.nextToken && (
+          <button
+            onClick={() => handleCollectData(stats.nextToken)}
+            disabled={loading}
+            className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 disabled:opacity-50 shadow-lg animate-pulse"
+          >
+            {loading ? 'Loading...' : 'Load Next Batch ⬇'}
+          </button>
+        )}
+        <div className={`text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
+          v4.5 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
+        </div>
       </div>
     </div>
   );

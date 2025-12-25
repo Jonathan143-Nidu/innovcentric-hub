@@ -97,57 +97,74 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
         if (targetEmail && targetEmail !== 'Select User' && targetEmail !== 'All Users') {
             console.log(`Targeting single user: ${targetEmail}`);
             // Fetch name for this specific user if possible, or just use email as name
-            usersToProcess = [{
-                primaryEmail: targetEmail,
-                name: { fullName: targetEmail } // Placeholder name
-            }];
-        } else {
-            // 1. Get All Users
-            const users = await listAllUsers(DOMAIN, ADMIN_EMAIL);
-            console.log(`Found ${users.length} users.`);
-            usersToProcess = users;
-        }
+            let allData = [];
+            let nextToken = null;
 
-        // 2. Loop through users and get their data
-        const allData = [];
+            if (targetEmail === 'All Users' || targetEmail === 'all') {
+                // 1. Get All Users
+                const users = await listAllUsers(DOMAIN, ADMIN_EMAIL);
+                console.log(`[API] Fetching all users (${users.length})...`);
 
-        for (const user of usersToProcess) {
-            // Skip suspended users if needed
-            if (user.suspended) continue;
-
-            try {
-                // Pass startDate and endDate from the request body
-                const activities = await getUserActivity(user.primaryEmail, req.body.startDate, req.body.endDate);
-
-                allData.push({
-                    employee_name: user.name.fullName,
-                    employee_email: user.primaryEmail,
-                    department: user.orgUnitPath || 'General',
-                    activities: activities
+                // 2. Loop through users and get their data (Parallel)
+                const promises = users.map(async (user) => {
+                    if (user.suspended) return null;
+                    try {
+                        const acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
+                        return {
+                            employee_name: user.name.fullName,
+                            employee_email: user.primaryEmail,
+                            department: user.orgUnitPath || 'General',
+                            activities: acts
+                        };
+                    } catch (err) {
+                        return {
+                            employee_name: user.name.fullName,
+                            employee_email: user.primaryEmail,
+                            error: err.message
+                        };
+                    }
                 });
-            } catch (err) {
-                console.error(`Failed to fetch data for ${user.primaryEmail}:`, err.message);
-                // Push partial error data so we see it in dashboard
-                allData.push({
-                    employee_name: user.name.fullName,
-                    employee_email: user.primaryEmail,
-                    error: err.message || "Unknown Error"
-                });
+
+                const results = await Promise.all(promises);
+                allData = results.filter(r => r !== null);
+
+            } else {
+                // Paginated Single User
+                const result = await getUserActivity(authClient, targetEmail, startDate, endDate, pageToken);
+                allData = result;
+                nextToken = result.meta?.nextToken;
             }
-        }
 
-        const stats = {
-            fetched: allData.meta?.fetched || 0,
-            analyzed: allData.length,
-            limitReached: allData.meta?.limitReached || false,
-            inbox: allData.filter(e => e.analysis && e.analysis.is_inbox).length
-        };
-        res.json({ success: true, version: "v4.3", stats, data: allData });
-    } catch (error) {
-        console.error('Error collecting data:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
+            // Calculate Stats
+            let inboxCount = 0;
+            let fetchedCount = 0;
+
+            if (targetEmail === 'All Users' || targetEmail === 'all') {
+                // Aggregate from all employees
+                allData.forEach(emp => {
+                    if (emp.activities) {
+                        fetchedCount += emp.activities.meta?.fetched || 0;
+                        inboxCount += emp.activities.filter(e => e.analysis && e.analysis.is_inbox).length;
+                    }
+                });
+            } else {
+                // Single User (allData is array of emails)
+                fetchedCount = allData.meta?.fetched || 0;
+                inboxCount = allData.filter(e => e.analysis && e.analysis.is_inbox).length;
+            }
+
+            const stats = {
+                fetched: fetchedCount,
+                analyzed: allData.length, // For single user this is # of emails. For all users this is # of employees.
+                nextToken: nextToken,
+                inbox: inboxCount
+            };
+            res.json({ success: true, version: "v4.5", stats, data: allData });
+        } catch (error) {
+            console.error('Error collecting data:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
 
 // Catch-all handler for any request that doesn't match an API route
 // Sends back the React index.html configuration

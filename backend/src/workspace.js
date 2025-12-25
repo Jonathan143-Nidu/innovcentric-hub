@@ -60,20 +60,16 @@ function getEasternEpoch(dateString, isEnd = false) {
 }
 
 // --- Helper: Get User Activity (Inbox + Sent) ---
-async function getUserActivity(userEmail, startDate, endDate) {
-    console.log(`Fetching activity for: ${userEmail} `);
-    const authClient = await getImpersonatedClient(userEmail);
+async function getUserActivity(authClient, userEmail, startDate, endDate, pageToken = null) {
     const gmail = google.gmail({ version: 'v1', auth: authClient });
 
-    // 0. Fetch User's Labels (To find "RTR", "Submission", "Rate Confirmation")
-    let rtrLabelIds = new Set();
+    // 0. Get Labels (for RTR detection)
+    const rtrLabelIds = new Set();
     try {
-        const labelRes = await gmail.users.labels.list({ userId: 'me' });
-        const labels = labelRes.data.labels || [];
-        const targetNames = ['rtr', 'rate confirmation', 'submission', 'submissions', 'rate confirmed'];
-
+        const labelsRes = await gmail.users.labels.list({ userId: 'me' });
+        const labels = labelsRes.data.labels || [];
         labels.forEach(l => {
-            if (l.name && targetNames.some(t => l.name.toLowerCase().includes(t))) {
+            if (l.name.toLowerCase().includes('rtr') || l.name.toLowerCase().includes('submission')) {
                 rtrLabelIds.add(l.id);
             }
         });
@@ -83,62 +79,46 @@ async function getUserActivity(userEmail, startDate, endDate) {
     }
 
     // 1. Construct Query
-    // CHANGED: Search "All Mail" (including Archived), excluding Trash/Spam/Drafts.
-    // CHANGED: Use native YYYY/MM/DD for better timezone handling (respects mailbox timezone)
     let query = '-in:trash -in:spam -in:drafts';
 
     if (startDate) {
-        // YYYY-MM-DD -> YYYY/MM/DD
         const startStr = startDate.replace(/-/g, '/');
         query += ` after:${startStr}`;
     }
     if (endDate) {
-        // Increment End Date by 1 day to make it inclusive (because 'before:' is exclusive)
         const d = new Date(endDate);
         d.setDate(d.getDate() + 1);
         const nextDay = d.toISOString().split('T')[0].replace(/-/g, '/');
         query += ` before:${nextDay}`;
     }
 
-    console.log(`[Query] ${userEmail}: ${query}`);
+    console.log(`[Query] ${userEmail}: ${query} | PageToken: ${pageToken ? 'Yes' : 'No'}`);
 
     let allMessages = [];
-    let nextPageToken = null;
-    let pageCount = 0;
+    let nextToken = null;
 
-    // 2. Paginated Fetch Loop
-    do {
-        try {
-            const res = await gmail.users.messages.list({
-                userId: 'me',
-                q: query,
-                maxResults: 500, // Max allowed per page
-                pageToken: nextPageToken
-            });
+    // 2. Single Page Fetch (Batch Wise)
+    try {
+        const res = await gmail.users.messages.list({
+            userId: 'me',
+            q: query,
+            maxResults: 100, // Fetch 100 messages per batch
+            pageToken: pageToken
+        });
 
-            const msgs = res.data.messages || [];
-            allMessages = allMessages.concat(msgs);
-            nextPageToken = res.data.nextPageToken;
+        allMessages = res.data.messages || [];
+        nextToken = res.data.nextPageToken || null;
+        console.log(`  - Page Fetched: ${allMessages.length} messages.`);
 
-            pageCount++;
-            console.log(`  - Page ${pageCount}: Fetched ${msgs.length} messages.`);
+    } catch (e) {
+        console.error(`Error listing messages for ${userEmail}:`, e.message);
+        throw e;
+    }
 
-            // Safety Break (Optional: Prevent Infinite Loops if thousands)
-            if (pageCount > 20) break; // Limit to ~10k emails to prevent timeout
-
-        } catch (e) {
-            console.error(`Error listing messages for ${userEmail}:`, e.message);
-            throw e;
-        }
-    } while (nextPageToken);
-
-    console.log(`  - Total Messages Found: ${allMessages.length}`);
     const detailedEmails = [];
 
     // 3. Process Threads (Group by ThreadId)
-    // We already have all messages. Now let's group them first.
     const threadMap = new Map();
-
     allMessages.forEach(msg => {
         if (!threadMap.has(msg.threadId)) {
             threadMap.set(msg.threadId, []);
@@ -148,12 +128,8 @@ async function getUserActivity(userEmail, startDate, endDate) {
 
     console.log(`  - Unique Threads: ${threadMap.size}`);
 
-    // Process each thread to find the "Best" representative message for each category
-    // LIMIT: Reverted to 500 to prevent Timeouts on Cloud Run.
-    const MAX_THREADS = 500;
-    const allThreads = Array.from(threadMap.values());
-    const limitReached = allThreads.length > MAX_THREADS;
-    const threadsToProcess = allThreads.slice(0, MAX_THREADS);
+    // Process ALL threads in this batch (since we already limited the fetch to 100/500)
+    const threadsToProcess = Array.from(threadMap.values());
 
     // Batch processing to avoid Gmail Rate Limits (Chunk size: 10)
     const chunkSize = 10;
@@ -189,7 +165,7 @@ async function getUserActivity(userEmail, startDate, endDate) {
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
     // Attach Meta Stats
-    detailedEmails.meta = { fetched: allMessages.length, limitReached };
+    detailedEmails.meta = { fetched: allMessages.length, nextToken };
 
     return detailedEmails;
 }
