@@ -198,8 +198,10 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     // If all are sent by us (e.g. we started thread), use the first one.
     const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
 
+    console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Primary: ${primaryMsg.id}`);
     const payload = primaryMsg.payload || {};
     const headers = payload.headers || [];
+    console.log(`[DEBUG] Headers Found: ${headers.length} | Keys: ${headers.map(h => h.name).join(', ')}`);
 
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
     // Parse From header: "Name <email>" -> "Name"
