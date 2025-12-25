@@ -231,8 +231,8 @@ function App() {
           }
         });
 
-        setRtrList(allRTRs);
-        setResumeList(allResumes);
+        setRtrList(newRtrs);
+        setResumeList(newResumes);
 
         // 3. Totals
         setTotals({
