@@ -1,4 +1,4 @@
-const { GoogleAuth } = require('google-auth-library');
+const { GoogleAuth, Impersonated } = require('google-auth-library');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
@@ -38,88 +38,33 @@ async function getImpersonatedClient(userEmail) {
     }
 
     // --- STRATEGY 2: Keyless (IAM Credentials API) ---
-    console.log(`[Auth] ☁️ No local key found. Attempting Cloud IAM SignJwt for ${userEmail}`);
+    // Uses the Cloud Run Service Account Identity to impersonate the Workspace User
+    console.log(`[Auth] ☁️ No local key found. Using IAM Impersonation for ${userEmail}`);
 
     try {
-        // Get base credentials (requires 'service_account_token_creator' role)
+        // 1. Get the base credentials of the Cloud Run instance
         const auth = new GoogleAuth({
             scopes: ['https://www.googleapis.com/auth/cloud-platform']
         });
-        const client = await auth.getClient();
+        const sourceClient = await auth.getClient();
 
-        // Create JWT for DWD
-        const iat = Math.floor(Date.now() / 1000);
-        const exp = iat + 3600; // 1 hour
-
-        const payload = {
-            iss: client.email, // Service Account Email
-            sub: userEmail,    // User to impersonate
-            aud: 'https://oauth2.googleapis.com/token',
-            iat,
-            exp,
-            scope: SCOPES.join(' ')
-        };
-
-        // Sign the JWT using IAM API
-        const iam = google.iamcredentials({ version: 'v1', auth: client });
-        const name = `projects/-/serviceAccounts/${client.email}`;
-
-        console.log(`[Auth] Signing JWT as ${client.email}...`);
-
-        const res = await iam.projects.serviceAccounts.signJwt({
-            name: name,
-            requestBody: {
-                payload: JSON.stringify(payload)
-            }
+        // 2. Create the Impersonated Client
+        // Note: The Service Account needs "Service Account Token Creator" role on itself.
+        const targetClient = new Impersonated({
+            sourceClient: sourceClient,
+            targetPrincipal: userEmail, // The user we want to act as
+            lifetime: 3600,             // 1 Hour
+            targetScopes: SCOPES,
+            delegates: [],              // No intermediate service accounts
         });
 
-        const jwt = res.data.signedJwt;
-        // Exchange JWT for Access Token
-        const tokenRes = await google.oauth2('v2').tokeninfo({
-            access_token: null, // Hack to get client
-            id_token: null
-        });
-        // Wait, we need to POST to oauth2 endpoint manually or use a helper. 
-        // Easier: Use the signed JWT to create a simple OAuth2Client with credentials?
-        // Actually, the standard pattern for DWD with IAM is to exchange the signed JWT for an access token.
+        // The Impersonated client implements the auth interface directly
+        // But we need to verify if it works by refreshing it (acquiring headers)
+        // console.log(`[Auth] Impersonated Client created. Principal: ${userEmail}`);
 
-        // Let's use a simpler approach if possible? No, we need an access token for the USER.
-
-        // Manual Exchange
-        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-        // Error: node-fetch might not be installed. Use native fetch/axios/or built-in https.
-        // Node 18+ has fetch. Cloud Run is likely 20+.
-
-        const tokenResponse = await global.fetch('https://oauth2.googleapis.com/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                assertion: jwt
-            })
-        });
-
-        const tokenData = await tokenResponse.json();
-        if (tokenData.error) throw new Error(tokenData.error_description || tokenData.error);
-
-        const accessToken = tokenData.access_token;
-
-        // Return a mock Auth Client that just adds the header
-        const oAuth2Client = new google.auth.OAuth2();
-        oAuth2Client.setCredentials({ access_token: accessToken });
-        return oAuth2Client;
+        return targetClient;
 
     } catch (e) {
-        console.error(`[Auth] FATAL: Failed to impersonate ${userEmail}:`, e.message);
-        throw new Error(`Impersonation Failed: ${e.message}`);
-    }
-    const payload = JSON.stringify({
-        iss: SERVICE_ACCOUNT_EMAIL,
-        sub: userEmail,
-        scope: SCOPES.join(' '),
-        aud: 'https://oauth2.googleapis.com/token',
-        iat: iat,
-        exp: iat + 3600
     });
 
     try {
