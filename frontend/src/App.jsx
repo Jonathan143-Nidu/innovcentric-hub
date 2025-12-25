@@ -102,11 +102,15 @@ function App() {
               if (email.analysis && email.analysis.is_inbox) {
                 allInbox.push({
                   timestamp: email.updated_at || email.timestamp, // Store raw for sorting
-                  date: new Date(email.updated_at || email.timestamp).toLocaleString(), // Local Time
+                  date: new Date(email.updated_at || email.timestamp).toLocaleString('en-US', {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: true, timeZoneName: 'short'
+                  }),
                   sender: email.analysis.sender_name || "Unknown",
                   subject: email.analysis.role_display || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
                   replied: email.analysis.replied ? "Yes" : "No",
-                  summary: `[${email.updated_at || email.timestamp}] ` + (email.analysis.summary || email.snippet || "")
+                  summary: email.analysis.summary || email.snippet || ""
                 });
               }
 
