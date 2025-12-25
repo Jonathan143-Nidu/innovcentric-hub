@@ -1,7 +1,15 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { createWorkspaceClient } = require('./src/auth');
+// const { createWorkspaceClient } = require('./src/auth'); // Unused and potentially invalid import
+
+// Global Crash Handler for Debugging
+process.on('uncaughtException', (err) => {
+    console.error('CRITICAL STARTUP ERROR:', err);
+    console.error(err.stack);
+});
+
+console.log('Booting innovcentric-hub backend v5.2...');
 
 const path = require('path');
 
