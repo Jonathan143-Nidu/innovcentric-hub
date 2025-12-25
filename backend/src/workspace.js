@@ -145,24 +145,22 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
             const threadId = threadMsgs[0].threadId;
 
             try {
+                // FETCH THREAD DETAILS - OPTIMIZATION: 'metadata' (Fast Mode)
                 const threadDetails = await gmail.users.threads.get({
                     userId: 'me',
-                    // FETCH THREAD DETAILS - OPTIMIZATION: 'metadata' (Fast Mode)
-                    const threadDetails = await gmail.users.threads.get({
-                        userId: 'me',
-                        id: threadId,
-                        format: 'metadata',
-                        metadataHeaders: ['From', 'Subject', 'Date']
-                    });
+                    id: threadId,
+                    format: 'metadata',
+                    metadataHeaders: ['From', 'Subject', 'Date']
+                });
 
-                    // Analyze the Thread as a Whole
-                    const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
-                    if(analysis) detailedEmails.push(analysis);
+                // Analyze the Thread as a Whole
+                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
+                if (analysis) detailedEmails.push(analysis);
 
-                } catch (e) {
-                    console.error(`Error fetching thread ${threadId}: ${e.message}`);
-                }
-            }));
+            } catch (e) {
+                console.error(`Error fetching thread ${threadId}: ${e.message}`);
+            }
+        }));
     }
 
     // Sort by timestamp descending
