@@ -55,6 +55,8 @@ function App() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState({});
+  const [error, setError] = useState(null); // For "All Users" summary
 
   // Data Lists
   const [userRows, setUserRows] = useState([]); // For "All Users" summary
@@ -114,11 +116,13 @@ function App() {
           targetEmail: selectedUser === 'all' ? 'All Users' : selectedUser
         })
       });
-      const result = await response.json();
+      const data = await response.json();
 
-      if (result.success) {
+      if (data.success) {
+        if (data.stats) setStats(data.stats);
+        const rawData = data.data || [];
         // 1. Process "All Users" Rows
-        const newRows = result.data.map(emp => {
+        const newRows = rawData.map(emp => {
           if (emp.error) return { name: emp.employee_name, inbox: 0, sent: 0, rtrs: 0, error: emp.error };
           const acts = emp.activities || [];
           return {
@@ -499,8 +503,8 @@ function App() {
       </main>
       {/* DEBUG BADGE */}
       {/* VERSION WATERMARK */}
-      <div className="fixed bottom-2 right-4 text-xs text-gray-400 font-mono">
-        System v4.2 | Backend Connected
+      <div className="fixed bottom-2 right-4 text-xs text-gray-500 font-mono bg-white/80 px-2 py-1 rounded shadow border border-gray-200">
+        v4.3 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Shown: {stats.analyzed || 0}
       </div>
     </div>
   );

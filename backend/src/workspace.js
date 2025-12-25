@@ -149,8 +149,8 @@ async function getUserActivity(userEmail, startDate, endDate) {
     console.log(`  - Unique Threads: ${threadMap.size}`);
 
     // Process each thread to find the "Best" representative message for each category
-    // LIMIT: Increased to 500 to capture more data.
-    const threadsToProcess = Array.from(threadMap.values()).slice(0, 500);
+    // LIMIT: Increased to 1000 to capture more data for high-volume users.
+    const threadsToProcess = Array.from(threadMap.values()).slice(0, 1000);
 
     // Batch processing to avoid Gmail Rate Limits (Chunk size: 10)
     const chunkSize = 10;
@@ -182,8 +182,11 @@ async function getUserActivity(userEmail, startDate, endDate) {
         }));
     }
 
-    // Sort by Date Descending (Newest First)
-    detailedEmails.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    // Sort by timestamp descending
+    detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
+
+    // Attach Meta Stats
+    detailedEmails.meta = { fetched: allMessages.length };
 
     return detailedEmails;
 }
