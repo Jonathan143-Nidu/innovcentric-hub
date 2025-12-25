@@ -94,7 +94,7 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
     console.log(`[Query] ${userEmail}: ${query} | PageToken: ${pageToken ? 'Yes' : 'No'}`);
 
-    const allMessages = [];
+    let allMessages = [];
     let nextToken = null;
     let totalEstimate = 0;
 
@@ -174,7 +174,6 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     return detailedEmails;
 }
 
-// --- Helper: Analyze a Whole Thread ---
 // --- Helper: Analyze a Whole Thread ---
 async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     if (!threadData || !threadData.messages) return null;
