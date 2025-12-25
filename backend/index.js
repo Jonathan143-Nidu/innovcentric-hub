@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-// const { createWorkspaceClient } = require('./src/auth'); // Unused and potentially invalid import
 
 // Global Crash Handler for Debugging
 process.on('uncaughtException', (err) => {
@@ -9,7 +8,7 @@ process.on('uncaughtException', (err) => {
     console.error(err.stack);
 });
 
-console.log('Booting innovcentric-hub backend v5.2...');
+console.log('Booting innovcentric-hub backend v5.8...');
 
 const path = require('path');
 
@@ -70,6 +69,7 @@ app.get('/health', (req, res) => {
 });
 
 const { listAllUsers, getUserActivity } = require('./src/workspace');
+const { getImpersonatedClient } = require('./src/auth');
 
 // --- New Endpoint: Get All Users (for Dropdown) ---
 // PROTECTED BY AUTH
@@ -119,6 +119,8 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             const promises = users.map(async (user) => {
                 if (user.suspended) return null;
                 try {
+                    // Impersonate THIS user to access their data
+                    const authClient = await getImpersonatedClient(user.primaryEmail);
                     const acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
                     return {
                         employee_name: user.name.fullName,
@@ -140,6 +142,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
 
         } else {
             // Paginated Single User
+            const authClient = await getImpersonatedClient(targetEmail);
             const result = await getUserActivity(authClient, targetEmail, startDate, endDate, req.body.pageToken);
             allData = result;
             nextToken = result.meta?.nextToken;
@@ -171,7 +174,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             total: allData.meta?.total // Pass total estimate through
         };
 
-        res.json({ success: true, version: "v5.5", stats, data: allData });
+        res.json({ success: true, version: "v5.8", stats, data: allData });
 
     } catch (error) {
         console.error('Error collecting data:', error);
@@ -188,5 +191,5 @@ app.get(/(.*)/, (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
-    console.log("Verification: v2.5 Online (500 limit, Real Sender Names)");
+    console.log("Verification: v5.8 Online (Auth Fixed for AuthClient)");
 });
