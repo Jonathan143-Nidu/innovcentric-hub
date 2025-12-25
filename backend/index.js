@@ -40,7 +40,7 @@ const verifyGoogleToken = async (req, res, next) => {
 
         // 3. Authorization Check (Allow list)
         // Allow ONLY hiring@innovcentric.com (or add others here)
-        const ALLOWED_EMAILS = ['hiring@innovcentric.com', 'ganesh@innovcentric.com', 'jonathan@innovcentric.com'];
+        const ALLOWED_EMAILS = ['hiring@innovcentric.com', 'pc@innovcentric.com', 'jt@innovcentric.com', 'raja@innovcentric.com'];
 
         if (ALLOWED_EMAILS.includes(userEmail)) {
             console.log(`Access Granted to: ${userEmail}`);

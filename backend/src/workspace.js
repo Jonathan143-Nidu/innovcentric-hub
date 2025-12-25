@@ -206,10 +206,10 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
     const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
 
-    // Date: Normalized to ISO
     // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
     // Header 'Date' is unreliable for sorting.
     const internalDate = parseInt(primaryMsg.internalDate, 10);
+    const dateRaw = headers.find(h => h.name === 'Date')?.value;
     const timestamp = !isNaN(internalDate)
         ? new Date(internalDate).toISOString()
         : (dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString());
@@ -290,7 +290,6 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         subject: roleDisplay, // User asked for "Role only"
         original_subject: subjectRaw, // Keep original available
         from: fromName,
-        summary: summary,
         summary: summary,
         updated_at: timestamp,
         sort_epoch: parseInt(primaryMsg.internalDate, 10), // Flawless Numeric Sort Key
