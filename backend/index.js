@@ -100,79 +100,84 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
         const ADMIN_EMAIL = 'hiring@innovcentric.com';
         const DOMAIN = 'innovcentric.com';
 
-        let usersToProcess = [];
+        let allData = [];
+        let nextToken = null;
 
-        if (targetEmail && targetEmail !== 'Select User' && targetEmail !== 'All Users') {
-            console.log(`Targeting single user: ${targetEmail}`);
-            // Fetch name for this specific user if possible, or just use email as name
-            let allData = [];
-            let nextToken = null;
-
-            if (targetEmail === 'All Users' || targetEmail === 'all') {
-                // 1. Get All Users
-                const users = await listAllUsers(DOMAIN, ADMIN_EMAIL);
-                console.log(`[API] Fetching all users (${users.length})...`);
-
-                // 2. Loop through users and get their data (Parallel)
-                const promises = users.map(async (user) => {
-                    if (user.suspended) return null;
-                    try {
-                        const acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
-                        return {
-                            employee_name: user.name.fullName,
-                            employee_email: user.primaryEmail,
-                            department: user.orgUnitPath || 'General',
-                            activities: acts
-                        };
-                    } catch (err) {
-                        return {
-                            employee_name: user.name.fullName,
-                            employee_email: user.primaryEmail,
-                            error: err.message
-                        };
-                    }
-                });
-
-                const results = await Promise.all(promises);
-                allData = results.filter(r => r !== null);
-
-            } else {
-                // Paginated Single User
-                const result = await getUserActivity(authClient, targetEmail, startDate, endDate, pageToken);
-                allData = result;
-                nextToken = result.meta?.nextToken;
-            }
-
-            // Calculate Stats
-            let inboxCount = 0;
-            let fetchedCount = 0;
-
-            if (targetEmail === 'All Users' || targetEmail === 'all') {
-                // Aggregate from all employees
-                allData.forEach(emp => {
-                    if (emp.activities) {
-                        fetchedCount += emp.activities.meta?.fetched || 0;
-                        inboxCount += emp.activities.filter(e => e.analysis && e.analysis.is_inbox).length;
-                    }
-                });
-            } else {
-                // Single User (allData is array of emails)
-                fetchedCount = allData.meta?.fetched || 0;
-                inboxCount = allData.filter(e => e.analysis && e.analysis.is_inbox).length;
-            }
-
-            const stats = {
-                fetched: fetchedCount,
-                analyzed: allData.length, // For single user this is # of emails. For all users this is # of employees.
-                nextToken: nextToken,
-                inbox: inboxCount
-            };
-            res.json({ success: true, version: "v4.5", stats, data: allData });
-        } catch (error) {
-            console.error('Error collecting data:', error);
-            res.status(500).json({ error: error.message });
+        // Validation
+        if (!targetEmail || targetEmail === 'Select User') {
+            return res.json({ success: false, error: "Please select a user." });
         }
-    });
+
+        console.log(`[API] Processing request for: ${targetEmail}`);
+
+        if (targetEmail === 'All Users' || targetEmail === 'all') {
+            // 1. Get All Users
+            const users = await listAllUsers(DOMAIN, ADMIN_EMAIL);
+            console.log(`[API] Fetching all users (${users.length})...`);
+
+            // 2. Loop through users and get their data (Parallel)
+            const promises = users.map(async (user) => {
+                if (user.suspended) return null;
+                try {
+                    const acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
+                    return {
+                        employee_name: user.name.fullName,
+                        employee_email: user.primaryEmail,
+                        department: user.orgUnitPath || 'General',
+                        activities: acts
+                    };
+                } catch (err) {
+                    return {
+                        employee_name: user.name.fullName,
+                        employee_email: user.primaryEmail,
+                        error: err.message
+                    };
+                }
+            });
+
+            const results = await Promise.all(promises);
+            allData = results.filter(r => r !== null);
+
+        } else {
+            // Paginated Single User
+            const result = await getUserActivity(authClient, targetEmail, startDate, endDate, req.body.pageToken);
+            allData = result;
+            nextToken = result.meta?.nextToken;
+        }
+
+        // Calculate Stats
+        let inboxCount = 0;
+        let fetchedCount = 0;
+
+        if (targetEmail === 'All Users' || targetEmail === 'all') {
+            // Aggregate from all employees
+            allData.forEach(emp => {
+                if (emp.activities && Array.isArray(emp.activities)) {
+                    fetchedCount += emp.activities.meta?.fetched || 0;
+                    inboxCount += emp.activities.filter(e => e.analysis && e.analysis.is_inbox).length;
+                }
+            });
+        } else {
+            // Single User (allData is array of emails)
+            fetchedCount = allData.meta?.fetched || 0;
+            inboxCount = Array.isArray(allData) ? allData.filter(e => e.analysis && e.analysis.is_inbox).length : 0;
+        }
+
+        const stats = {
+            fetched: fetchedCount,
+            analyzed: allData.length,
+            nextToken: nextToken,
+            inbox: inboxCount,
+            total: allData.meta?.total // Pass total estimate through
+        };
+
+        res.json({ success: true, version: "v5.5", stats, data: allData });
+
+    } catch (error) {
+        console.error('Error collecting data:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Catch-all handler for any request that doesn't match an API route
 // Sends back the React index.html configuration
