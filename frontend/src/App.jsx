@@ -1,6 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { GoogleLogin } from '@react-oauth/google';
 
+// --- Helper Hook for Sorting ---
+const useSortedData = (items, config = null) => {
+  const [sortConfig, setSortConfig] = React.useState(config);
+
+  const sortedItems = React.useMemo(() => {
+    let sortableItems = [...items];
+    if (sortConfig !== null) {
+      sortableItems.sort((a, b) => {
+        let aKey = a[sortConfig.key];
+        let bKey = b[sortConfig.key];
+
+        // Handle Dates (sort_epoch preferred)
+        if (sortConfig.key === 'date' && a.sort_epoch && b.sort_epoch) {
+          aKey = a.sort_epoch;
+          bKey = b.sort_epoch;
+        }
+
+        if (aKey < bKey) return sortConfig.direction === 'ascending' ? -1 : 1;
+        if (aKey > bKey) return sortConfig.direction === 'ascending' ? 1 : -1;
+        return 0;
+      });
+    }
+    return sortableItems;
+  }, [items, sortConfig]);
+
+  const requestSort = (key) => {
+    let direction = 'ascending';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'ascending') {
+      direction = 'descending';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  return { items: sortedItems, requestSort, sortConfig };
+};
+
+const SortIcon = ({ direction }) => {
+  if (!direction) return <span className="text-gray-300 ml-1">⇅</span>;
+  return direction === 'ascending' ? <span className="text-blue-600 ml-1">↑</span> : <span className="text-blue-600 ml-1">↓</span>;
+};
+
+
 function App() {
   // Auth State
   const [token, setToken] = useState(null);
@@ -22,6 +64,10 @@ function App() {
 
   // KPI Totals
   const [totals, setTotals] = useState({ inbox: 0, sent: 0, rtrs: 0, resumes: 0 });
+
+  // Init Sorting Hooks
+  const { items: sortedInbox, requestSort: sortInbox, sortConfig: inboxSort } = useSortedData(inboxList, { key: 'date', direction: 'descending' });
+  const { items: sortedResumes, requestSort: sortResumes, sortConfig: resumeSort } = useSortedData(resumeList, { key: 'date', direction: 'descending' });
 
   // Login Handlers
   const handleLoginSuccess = (credentialResponse) => {
@@ -96,17 +142,17 @@ function App() {
               if (seenIds.has(email.id)) return; // Skip duplicates
               seenIds.add(email.id);
 
-              const dateStr = new Date(email.timestamp).toLocaleDateString();
+              const dateStr = new Date(email.updated_at || email.timestamp).toLocaleString('en-US', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: true, timeZoneName: 'short'
+              });
 
               // Inbox
               if (email.analysis && email.analysis.is_inbox) {
                 allInbox.push({
-                  timestamp: email.updated_at || email.timestamp, // Store raw for sorting
-                  date: new Date(email.updated_at || email.timestamp).toLocaleString('en-US', {
-                    day: '2-digit', month: '2-digit', year: 'numeric',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                    hour12: true, timeZoneName: 'short'
-                  }),
+                  sort_epoch: email.sort_epoch || new Date(email.updated_at || email.timestamp).getTime(),
+                  date: dateStr,
                   sender: email.analysis.sender_name || "Unknown",
                   subject: email.analysis.role_display || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
                   replied: email.analysis.replied ? "Yes" : "No",
@@ -132,6 +178,7 @@ function App() {
               if (email.analysis && email.analysis.has_resume && email.analysis.is_sent) {
                 email.analysis.resume_filenames.forEach(fname => {
                   allResumes.push({
+                    sort_epoch: email.sort_epoch || new Date(email.updated_at || email.timestamp).getTime(),
                     date: dateStr,
                     to: "Client/Vendor", // simplified
                     position: email.subject,
@@ -144,17 +191,7 @@ function App() {
           }
         });
 
-        // FORCE SORT: Robust Sorting with NaN checks
-        allInbox.sort((a, b) => {
-          const tA = new Date(a.timestamp).getTime();
-          const tB = new Date(b.timestamp).getTime();
-          // Move Invalid Dates to bottom
-          if (isNaN(tA)) return 1;
-          if (isNaN(tB)) return -1;
-          return tB - tA; // Descending (Newest First)
-        });
-
-        setInboxList(allInbox);
+        setInboxList(allInbox); // No need to pre-sort heavily here if using hooks, but good to have default
         setRtrList(allRTRs);
         setResumeList(allResumes);
 
@@ -348,17 +385,25 @@ function App() {
               <h2 className="text-lg font-semibold text-gray-800">Inbox Log</h2>
             </div>
             <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-500 font-medium border-b">
+              <thead className="bg-gray-50 text-gray-500 font-medium border-b cursor-pointer select-none">
                 <tr>
-                  <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">Sender Name</th>
-                  <th className="px-6 py-3">Subject (Role)</th>
-                  <th className="px-6 py-3">Replied?</th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('date')}>
+                    Date {inboxSort?.key === 'date' && <SortIcon direction={inboxSort.direction} />}
+                  </th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('sender')}>
+                    Sender Name {inboxSort?.key === 'sender' && <SortIcon direction={inboxSort.direction} />}
+                  </th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('subject')}>
+                    Subject (Role) {inboxSort?.key === 'subject' && <SortIcon direction={inboxSort.direction} />}
+                  </th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('replied')}>
+                    Replied? {inboxSort?.key === 'replied' && <SortIcon direction={inboxSort.direction} />}
+                  </th>
                   <th className="px-6 py-3">Summary</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {inboxList.length > 0 ? inboxList.map((item, i) => (
+                {sortedInbox.length > 0 ? sortedInbox.map((item, i) => (
                   <tr key={i} className="hover:bg-gray-50">
                     <td className="px-6 py-3 text-gray-500 whitespace-nowrap">{item.date}</td>
                     <td className="px-6 py-3 font-medium text-gray-800">{item.sender}</td>
@@ -386,16 +431,22 @@ function App() {
               <h2 className="text-lg font-semibold text-gray-800">Resumes Submitted</h2>
             </div>
             <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-500 font-medium border-b">
+              <thead className="bg-gray-50 text-gray-500 font-medium border-b cursor-pointer select-none">
                 <tr>
-                  <th className="px-6 py-3">Date</th>
-                  <th className="px-6 py-3">Position (Subject)</th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('date')}>
+                    Date {resumeSort?.key === 'date' && <SortIcon direction={resumeSort.direction} />}
+                  </th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('position')}>
+                    Position (Subject) {resumeSort?.key === 'position' && <SortIcon direction={resumeSort.direction} />}
+                  </th>
                   <th className="px-6 py-3">Resume File</th>
-                  <th className="px-6 py-3">Status</th>
+                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('status')}>
+                    Status {resumeSort?.key === 'status' && <SortIcon direction={resumeSort.direction} />}
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {resumeList.length > 0 ? resumeList.map((item, i) => (
+                {sortedResumes.length > 0 ? sortedResumes.map((item, i) => (
                   <tr key={i} className="hover:bg-gray-50">
                     <td className="px-6 py-3 text-gray-500">{item.date}</td>
                     <td className="px-6 py-3 text-gray-800">{item.position}</td>

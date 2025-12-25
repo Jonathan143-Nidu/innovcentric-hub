@@ -291,7 +291,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
         original_subject: subjectRaw, // Keep original available
         from: fromName,
         summary: summary,
+        summary: summary,
         updated_at: timestamp,
+        sort_epoch: parseInt(primaryMsg.internalDate, 10), // Flawless Numeric Sort Key
         analysis: {
             has_resume: hasResume,
             resume_filenames: [...new Set(resumeFiles)],
