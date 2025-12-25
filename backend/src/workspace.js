@@ -228,9 +228,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     console.log(`[DEBUG] Headers Found: ${headers.length} | Keys: ${headers.map(h => h.name).join(', ')}`);
 
     const headerKeys = headers.map(h => h.name);
-    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || `(No Subject - H:${headers.length})`;
+    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
     // Parse From header: "Name <email>" -> "Name"
-    const fromRaw = headers.find(h => h.name === 'From')?.value || `Unknown (H:${headers.length} K:${headerKeys.slice(0, 3).join(',')})`;
+    const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
     const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim();
 
     // Date: Normalized to ISO from Internal Date (Epoch) for accuracy

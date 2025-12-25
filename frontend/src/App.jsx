@@ -153,10 +153,10 @@ function App() {
                 allInbox.push({
                   sort_epoch: email.sort_epoch || new Date(email.updated_at || email.timestamp).getTime(),
                   date: dateStr,
-                  sender: email.analysis.sender_name || "Unknown",
-                  subject: email.analysis.role_display || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
-                  replied: email.analysis.replied ? "Yes" : "No",
-                  summary: email.analysis.summary || email.snippet || ""
+                  sender: email.from || "Unknown",
+                  subject: email.subject || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
+                  replied: email.analysis.is_replied ? "Yes" : "No",
+                  summary: email.summary || email.snippet || ""
                 });
               }
 
