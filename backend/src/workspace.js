@@ -199,8 +199,28 @@ async function analyzeThread(threadData, rtrLabelIds, authClient) {
     const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
 
     console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Primary: ${primaryMsg.id}`);
-    const payload = primaryMsg.payload || {};
-    const headers = payload.headers || [];
+
+    let payload = primaryMsg.payload || {};
+    let headers = payload.headers || [];
+
+    // FALLBACK: If Thread details were partial (no headers), fetch the specific message
+    if (headers.length === 0) {
+        console.log(`[WARN] Thread ${threadData.id} missing headers. Fetching full message ${primaryMsg.id}...`);
+        try {
+            const gmail = google.gmail({ version: 'v1', auth: authClient });
+            const fullMsg = await gmail.users.messages.get({
+                userId: 'me',
+                id: primaryMsg.id,
+                format: 'full'
+            });
+            payload = fullMsg.data.payload || {};
+            headers = payload.headers || [];
+            console.log(`[RECOVERED] Found ${headers.length} headers after fallback.`);
+        } catch (e) {
+            console.error(`[ERROR] Failed to recover message ${primaryMsg.id}: ${e.message}`);
+        }
+    }
+
     console.log(`[DEBUG] Headers Found: ${headers.length} | Keys: ${headers.map(h => h.name).join(', ')}`);
 
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
