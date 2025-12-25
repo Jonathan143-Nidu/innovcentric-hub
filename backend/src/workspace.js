@@ -4,12 +4,6 @@ const { getImpersonatedClient } = require('./auth');
 // --- Helper: List all users in the domain ---
 async function listAllUsers(domain, adminEmail) {
     // We need a client acting as an Admin to list users.
-    // Ideally, use a Super Admin's email here for the 'subject'.
-    // For now, we'll assume the environment provided client can do this 
-    // OR we need the user to configure an "Admin Email" to impersonate.
-
-    // Strategy: The service account itself can't list users unless it impersonates an Admin.
-    // We will ask the caller to provide an admin email or configure it.
     if (!adminEmail) {
         throw new Error("Admin Email is required to list users.");
     }
@@ -20,37 +14,20 @@ async function listAllUsers(domain, adminEmail) {
 
     const res = await service.users.list({
         domain: domain,
-        customer: 'my_customer', // 'my_customer' is a confusing alias for "the current account"
-        maxResults: 50, // Limit for safety
+        customer: 'my_customer',
+        maxResults: 50,
         orderBy: 'email',
     });
 
     return res.data.users || [];
 }
 
-// --- Helper: Get Sent Emails for a User ---
-// --- Helper: Get User Activity (Inbox + Sent) ---
 // --- Helper: Convert Local Date String to US/Eastern Epoch Seconds ---
 function getEasternEpoch(dateString, isEnd = false) {
-    // dateString format: "YYYY-MM-DD"
-    // We treat the input string as if it's "YYYY-MM-DD" in US/Eastern.
-    // So if user selects "2025-12-22", we want the epoch for "2025-12-22 00:00:00 EST"
-
-    // Create date assuming midnight in UTC first, then adjust.
-    // Or simpler: Use a library, but since we want to avoid deps, we'll do string parsing.
-
     if (!dateString) return null;
 
     const [y, m, d] = dateString.split('-').map(Number);
-    const date = new Date(Date.UTC(y, m - 1, d, 5, 0, 0)); // 5 AM UTC is roughly Midnight EST (ignoring DST for simplicity or strictly following UTC-5)
-
-    // Better Approach: Force the time to be interpreted as NY Time
-    // Since we can't easily rely on server locale, we will just format it to seconds.
-    // Users want "USA Time", so let's rely on Gmail's native timezone handling if we can,
-    // OR just use UTC seconds which Gmail accepts.
-
-    // Let's stick to standard YYYY/MM/DD but ensure we cover the FULL 24h cycle
-    // by adding a day for the end date.
+    const date = new Date(Date.UTC(y, m - 1, d, 5, 0, 0)); // 5 AM UTC -> ~Midnight EST
 
     if (isEnd) {
         date.setDate(date.getDate() + 1);
@@ -140,10 +117,6 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
         await Promise.all(chunk.map(async (threadMsgs) => {
             // We typically want the LATEST message in the thread to get current status
-            // But we might need to scan the whole thread to see if *any* message has a Resume or RTR.
-
-            // Let's just grab the FULL thread details from Google to get the whole conversation context
-            // This is expensive but accurate.
             const threadId = threadMsgs[0].threadId;
 
             try {
@@ -180,14 +153,12 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     const messages = threadData.messages;
     if (messages.length === 0) return null;
 
-    console.log(`[BACKEND v4.2] Analyzing Thread ${threadData.id}`);
-
     // FIND THE "PRIMARY" MESSAGE (The one we received, to get Sender/Subject)
     // We look for the first message that is NOT sent by us.
     // If all are sent by us (e.g. we started thread), use the first one.
     const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
 
-    console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Primary: ${primaryMsg.id}`);
+    // console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Primary: ${primaryMsg.id}`);
 
     let payload = primaryMsg.payload || {};
     let headers = payload.headers || [];
@@ -211,9 +182,6 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
         }
     }
 
-    console.log(`[DEBUG] Headers Found: ${headers.length} | Keys: ${headers.map(h => h.name).join(', ')}`);
-
-    const headerKeys = headers.map(h => h.name);
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
     // Parse From header: "Name <email>" -> Extract Email ID
     const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
@@ -223,7 +191,6 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     const fromName = fromEmail;
 
     // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
-    // Header 'Date' is unreliable for sorting.
     const internalDate = parseInt(primaryMsg.internalDate, 10);
     const dateRaw = headers.find(h => h.name === 'Date')?.value;
     const timestamp = !isNaN(internalDate)
@@ -238,13 +205,10 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     let isRtr = false;
     let isSent = false;
     let isInbox = false;
-    let replied = false; // "Replied Status"
+    let replied = false;
     let resumeFiles = [];
 
     // Analyze thread for statuses
-    // Check if WE replied: If there is a SENT message AFTER a RECEIVED message? 
-    // Simplify: If thread contains both SENT and RECEIVED, we likely replied or they replied.
-    // Strict "Replied": If we have a SENT message.
     const hasSentMsg = messages.some(m => m.labelIds.includes('SENT'));
     const hasReceivedMsg = messages.some(m => !m.labelIds.includes('SENT'));
     if (hasSentMsg && hasReceivedMsg) {
@@ -256,7 +220,7 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
         const p = msg.payload || {};
         const labelIds = msg.labelIds || [];
 
-        // Resume Check - Metadata format still sends parts structure with filenames!
+        // Resume Check
         if (p.parts) {
             const files = p.parts
                 .filter(part => part.filename && part.filename.length > 0)
@@ -279,7 +243,7 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
 
         if (labelIds.includes('SENT')) isSent = true;
 
-        // Strict Inbox Check (as requested previously)
+        // Strict Inbox Check
         if (labelIds.includes('INBOX')) isInbox = true;
     });
 
@@ -288,12 +252,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     if (isRtr) {
         roleDisplay = "RTR";
     } else {
-        // Simple Heuristic: Remove "Fwd:", "Re:", split by common separators
         let clean = subjectRaw.replace(/^(Fwd|Re|Aw|Fw):\s*/i, '').trim();
-        // Take part before first dash, pipe, or colon if sensible length
-        // Regex: Match text until -, |, : or end.
         const match = clean.match(/^([^|\-:]+)/);
-        if (match && match[1] && match[1].length < 50) { // arbitrary length check
+        if (match && match[1] && match[1].length < 50) {
             roleDisplay = match[1].trim();
         } else {
             roleDisplay = clean;
@@ -303,12 +264,12 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     const result = {
         id: threadData.id,
         timestamp: timestamp,
-        subject: roleDisplay, // User asked for "Role only"
-        original_subject: subjectRaw, // Keep original available
+        subject: roleDisplay,
+        original_subject: subjectRaw,
         from: fromName,
         summary: summary,
         updated_at: timestamp,
-        sort_epoch: parseInt(primaryMsg.internalDate, 10), // Flawless Numeric Sort Key
+        sort_epoch: parseInt(primaryMsg.internalDate, 10),
         analysis: {
             has_resume: hasResume,
             resume_filenames: [...new Set(resumeFiles)],
@@ -321,20 +282,21 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
 
     // AI ENHANCEMENT FOR RTR THREADS
     if (isRtr) {
-        // Concatenate the last few messages to give AI context
         let combinedBody = "";
-        // Take last 2 messages for context
         const recentMsgs = messages.slice(-2);
 
         recentMsgs.forEach(m => {
-            // Use the helper to get the FULL body, not just the snippet
             const bodyPart = getEmailBody(m);
             combinedBody += bodyPart + "\n\n---\n\n";
         });
 
-        console.log(`[AI] Analyzing Thread RTR: ${subjectRaw}`);
-        const aiResult = await require('./ai').extractRTRDetails(combinedBody, subjectRaw);
-        result.ai_data = aiResult;
+        // console.log(`[AI] Analyzing Thread RTR: ${subjectRaw}`);
+        try {
+            const aiResult = await require('./ai').extractRTRDetails(combinedBody, subjectRaw);
+            result.ai_data = aiResult;
+        } catch (e) {
+            console.warn(`[AI] Skipped for ${threadData.id}: ${e.message}`);
+        }
     }
 
     return result;
@@ -364,7 +326,7 @@ function getEmailBody(messageData) {
     return body;
 }
 
-// --- Helper: Analyze Email Content ---
+// --- Helper: Analyze Email Content (Single Message Fallback) ---
 function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     const payload = messageData.payload || {};
     const headers = payload.headers || [];
@@ -383,7 +345,6 @@ function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     // Check for Attachments (Resumes)
     let resumeFiles = [];
     if (payload.parts) {
-        // Keywords to identify a Resume/Submission
         const keywords = ['resume', 'cv', 'profile', 'candidate', 'submission'];
 
         resumeFiles = payload.parts
@@ -398,17 +359,13 @@ function analyzeEmail(messageData, rtrLabelIds = new Set()) {
     // Detect if Sent or Inbox
     const labelIds = messageData.labelIds || [];
     const isSent = labelIds.includes('SENT');
-    // CHANGED: Strict Inbox check.
     const isInbox = labelIds.includes('INBOX');
 
     // Check for RTR
-    // 1. Subject Check
     const subLower = subject.toLowerCase();
     let isRtr = subLower.includes('rtr') || subLower.includes('right to represent');
 
-    // 2. Label Check (NEW)
     if (!isRtr && labelIds.length > 0) {
-        // Check if any of this email's labels match our target list
         isRtr = labelIds.some(id => rtrLabelIds.has(id));
     }
 
