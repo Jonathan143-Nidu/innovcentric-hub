@@ -169,66 +169,75 @@ function App() {
         const newInbox = [];
         const newResumes = [];
         const newRtrs = [];
+        const seenIds = new Set(); // Deduplication
 
-        // The backend should return a flat list of emails if targetEmail is specific,
-        // or a list of employees each with activities if targetEmail is 'All Users'.
-        // The provided snippet assumes `rawData` is a list of emails directly.
-        // Let's adapt to the original structure where `rawData` is a list of employees.
-        // If `rawData` is a flat list of emails, the `emp.activities` part needs adjustment.
-        // Assuming `rawData` is `[{ employee_name: '...', activities: [...] }, ...]`.
+        // NORMALIZE DATA STRUCTURE
+        // Single User mode returns explicit List of Emails.
+        // All Users mode returns List of Employees objects with .activities array.
+        let flattenedActivities = [];
 
-        const seenIds = new Set(); // Deduplication across all employees in this batch
+        if (rawData.length > 0) {
+          if (rawData[0].activities) {
+            // Formatting for "All Users" (Nested)
+            rawData.forEach(emp => {
+              if (emp.activities && Array.isArray(emp.activities)) {
+                flattenedActivities.push(...emp.activities);
+              }
+            });
+          } else {
+            // Formatting for "Single User" (Flat)
+            flattenedActivities = rawData;
+          }
+        }
 
-        rawData.forEach(emp => {
-          if (!emp.error && emp.activities) {
-            emp.activities.forEach(email => {
-              if (seenIds.has(email.id)) return; // Skip duplicates
-              seenIds.add(email.id);
+        // Process the flattened list
+        flattenedActivities.forEach(email => {
+          if (!email || !email.id) return;
+          if (seenIds.has(email.id)) return; // Skip duplicates
+          seenIds.add(email.id);
 
-              // Date specific filtering/verification (Backend does it, but good to ensure)
-              const date = new Date(email.updated_at || email.timestamp);
-              const dateStr = date.toLocaleString('en-US', {
-                month: '2-digit', day: '2-digit', year: 'numeric',
-                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
-                timeZoneName: 'short'
+          // Date specific filtering/verification (Backend does it, but good to ensure)
+          const date = new Date(email.updated_at || email.timestamp);
+          const dateStr = date.toLocaleString('en-US', {
+            month: '2-digit', day: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+            timeZoneName: 'short'
+          });
+
+          // Inbox
+          if (email.analysis && email.analysis.is_inbox) {
+            newInbox.push({
+              sort_epoch: email.sort_epoch || date.getTime(),
+              date: dateStr,
+              sender: email.from || "Unknown",
+              subject: email.subject || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
+              replied: email.analysis.is_replied ? "Yes" : "No",
+              summary: email.summary || email.snippet || ""
+            });
+          }
+          // Resumes (Sent)
+          if (email.analysis && email.analysis.has_resume && email.analysis.is_sent) {
+            email.analysis.resume_filenames.forEach(fname => {
+              newResumes.push({
+                sort_epoch: email.sort_epoch || date.getTime(),
+                date: dateStr,
+                to: "Client/Vendor", // simplified
+                position: email.subject,
+                attachment: fname,
+                status: "Sent"
               });
-
-              // Inbox
-              if (email.analysis && email.analysis.is_inbox) {
-                newInbox.push({
-                  sort_epoch: email.sort_epoch || date.getTime(),
-                  date: dateStr,
-                  sender: email.from || "Unknown",
-                  subject: email.subject || (email.snippet ? email.snippet.substring(0, 50) + "..." : "No Subject"),
-                  replied: email.analysis.is_replied ? "Yes" : "No",
-                  summary: email.summary || email.snippet || ""
-                });
-              }
-              // Resumes (Sent)
-              if (email.analysis && email.analysis.has_resume && email.analysis.is_sent) {
-                email.analysis.resume_filenames.forEach(fname => {
-                  newResumes.push({
-                    sort_epoch: email.sort_epoch || date.getTime(),
-                    date: dateStr,
-                    to: "Client/Vendor", // simplified
-                    position: email.subject,
-                    attachment: fname,
-                    status: "Sent"
-                  });
-                });
-              }
-              // RTR
-              if (email.analysis && email.analysis.is_rtr) {
-                const ai = email.ai_data || {};
-                newRtrs.push({
-                  date: dateStr,
-                  candidate: ai.candidate || emp.employee_name, // Use employee_name if candidate not in AI
-                  role: ai.position || email.subject, // Use email subject if role not in AI
-                  vendor: ai.vendor || "Unknown Vendor",
-                  rate: ai.rate || "N/A",
-                  location: ai.location || "N/A"
-                });
-              }
+            });
+          }
+          // RTR
+          if (email.analysis && email.analysis.is_rtr) {
+            const ai = email.ai_data || {};
+            newRtrs.push({
+              date: dateStr,
+              candidate: ai.candidate || selectedUser, // Use selectedUser if candidate not in AI
+              role: ai.position || email.subject,
+              vendor: ai.vendor || "Unknown Vendor",
+              rate: ai.rate || "N/A",
+              location: ai.location || "N/A"
             });
           }
         });
