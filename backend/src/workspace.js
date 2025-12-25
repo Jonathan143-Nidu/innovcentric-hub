@@ -37,10 +37,11 @@ function getEasternEpoch(dateString, isEnd = false) {
 }
 
 // --- Helper: Get User Activity (Inbox + Sent) ---
+// --- Helper: Get User Activity (Inbox + Sent) ---
 async function getUserActivity(authClient, userEmail, startDate, endDate, pageToken = null) {
     const gmail = google.gmail({ version: 'v1', auth: authClient });
 
-    // 0. Get Labels (for RTR detection)
+    // 0. Get Labels (for RTR detection) - fail soft
     const rtrLabelIds = new Set();
     try {
         const labelsRes = await gmail.users.labels.list({ userId: 'me' });
@@ -50,14 +51,12 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                 rtrLabelIds.add(l.id);
             }
         });
-        console.log(`[Labels] Found ${rtrLabelIds.size} relevant labels for RTR detection (User: ${userEmail})`);
     } catch (e) {
         console.warn(`[Labels] Failed to fetch labels for ${userEmail}: ${e.message}`);
     }
 
     // 1. Construct Query
     let query = '-in:trash -in:spam -in:drafts';
-
     if (startDate) {
         const startStr = startDate.replace(/-/g, '/');
         query += ` after:${startStr}`;
@@ -69,26 +68,21 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
         query += ` before:${nextDay}`;
     }
 
-    console.log(`[Query] ${userEmail}: ${query} | PageToken: ${pageToken ? 'Yes' : 'No'}`);
-
     let allMessages = [];
     let nextToken = null;
     let totalEstimate = 0;
 
-    // 2. Single Page Fetch (Batch Wise)
+    // 2. Single Page Fetch
     try {
         const res = await gmail.users.messages.list({
             userId: 'me',
             q: query,
-            maxResults: 100, // Fetch 100 messages per batch
+            maxResults: 100,
             pageToken: pageToken
         });
-
         allMessages = res.data.messages || [];
         nextToken = res.data.nextPageToken || null;
         totalEstimate = res.data.resultSizeEstimate || 0;
-        console.log(`  - Page Fetched: ${allMessages.length} messages. Estimate: ${totalEstimate}`);
-
     } catch (e) {
         console.error(`Error listing messages for ${userEmail}:`, e.message);
         throw e;
@@ -96,31 +90,23 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
     const detailedEmails = [];
 
-    // 3. Process Threads (Group by ThreadId)
+    // 3. Process Logic
+    // Processing threads in batches...
     const threadMap = new Map();
     allMessages.forEach(msg => {
-        if (!threadMap.has(msg.threadId)) {
-            threadMap.set(msg.threadId, []);
-        }
+        if (!threadMap.has(msg.threadId)) threadMap.set(msg.threadId, []);
         threadMap.get(msg.threadId).push(msg);
     });
 
-    console.log(`  - Unique Threads: ${threadMap.size}`);
-
-    // Process ALL threads in this batch (since we already limited the fetch to 100/500)
     const threadsToProcess = Array.from(threadMap.values());
-
-    // Batch processing to avoid Gmail Rate Limits (Chunk size: 10)
     const chunkSize = 10;
+
     for (let i = 0; i < threadsToProcess.length; i += chunkSize) {
         const chunk = threadsToProcess.slice(i, i + chunkSize);
-
         await Promise.all(chunk.map(async (threadMsgs) => {
-            // We typically want the LATEST message in the thread to get current status
             const threadId = threadMsgs[0].threadId;
-
             try {
-                // FETCH THREAD DETAILS - OPTIMIZATION: 'metadata' (Fast Mode)
+                // Fetch Thread Metadata
                 const threadDetails = await gmail.users.threads.get({
                     userId: 'me',
                     id: threadId,
@@ -128,20 +114,20 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                     metadataHeaders: ['From', 'Subject', 'Date']
                 });
 
-                // Analyze the Thread as a Whole
+                // Analyze
                 const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
                 if (analysis) detailedEmails.push(analysis);
 
             } catch (e) {
-                console.error(`Error fetching thread ${threadId}: ${e.message}`);
+                console.error(`Error processing thread ${threadId}:`, e.message);
             }
         }));
     }
 
-    // Sort by timestamp descending
+    // Sort
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
-    // Attach Meta Stats
+    // Meta attachment (Javascript array property hack to pass stats)
     detailedEmails.meta = { fetched: allMessages.length, nextToken, total: totalEstimate };
 
     return detailedEmails;
