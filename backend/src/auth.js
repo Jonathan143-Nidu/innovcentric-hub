@@ -59,37 +59,11 @@ async function getImpersonatedClient(userEmail) {
         });
 
         // The Impersonated client implements the auth interface directly
-        // But we need to verify if it works by refreshing it (acquiring headers)
-        // console.log(`[Auth] Impersonated Client created. Principal: ${userEmail}`);
-
         return targetClient;
 
     } catch (e) {
-    });
-
-    try {
-        const iam = google.iamcredentials({ version: 'v1', auth: client });
-        const signResponse = await iam.projects.serviceAccounts.signJwt({
-            name: `projects/-/serviceAccounts/${SERVICE_ACCOUNT_EMAIL}`,
-            requestBody: { payload: payload }
-        });
-
-        const tokenResponse = await client.request({
-            url: 'https://oauth2.googleapis.com/token',
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            data: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${signResponse.data.signedJwt}`
-        });
-
-        const oauth2Client = new google.auth.OAuth2();
-        oauth2Client.setCredentials({ access_token: tokenResponse.data.access_token });
-        return oauth2Client;
-
-    } catch (err) {
-        console.error(`[Auth] ❌ Authentication Failed.`);
-        console.error(`Reason: Missing 'service-account.json' AND missing local 'gcloud' login.`);
-        console.error(`Tip: For local testing, put the JSON key file in the 'backend' folder.`);
-        throw err;
+        console.error(`[Auth] FATAL: Failed to configure impersonation for ${userEmail}:`, e.message);
+        throw new Error(`Impersonation Config Failed: ${e.message}`);
     }
 }
 
