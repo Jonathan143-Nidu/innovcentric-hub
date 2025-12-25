@@ -4,8 +4,13 @@ const OpenAI = require('openai');
 // For this session, we use the provided key.
 const API_KEY = process.env.OPENAI_API_KEY;
 
+if (!API_KEY) {
+    console.warn("⚠️  WARNING: OPENAI_API_KEY is missing. AI features will fail.");
+}
+
+// Initialize safely to prevent startup crash
 const openai = new OpenAI({
-    apiKey: API_KEY,
+    apiKey: API_KEY || "dummy-key-to-prevent-crash",
 });
 
 /**
