@@ -125,7 +125,14 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`Server Error: ${response.statusText}`);
+        let errorMessage = response.statusText;
+        try {
+          const errData = await response.json();
+          if (errData && errData.error) errorMessage = errData.error;
+        } catch (e) {
+          // If JSON parse fails, use statusText
+        }
+        throw new Error(`Server Error: ${errorMessage}`);
       }
 
       const data = await response.json();
