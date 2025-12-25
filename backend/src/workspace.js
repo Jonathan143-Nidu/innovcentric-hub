@@ -147,18 +147,22 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
             try {
                 const threadDetails = await gmail.users.threads.get({
                     userId: 'me',
-                    id: threadId,
-                    format: 'full'
-                });
+                    // FETCH THREAD DETAILS - OPTIMIZATION: 'metadata' (Fast Mode)
+                    const threadDetails = await gmail.users.threads.get({
+                        userId: 'me',
+                        id: threadId,
+                        format: 'metadata',
+                        metadataHeaders: ['From', 'Subject', 'Date']
+                    });
 
-                // Analyze the Thread as a Whole
-                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
-                if (analysis) detailedEmails.push(analysis);
+                    // Analyze the Thread as a Whole
+                    const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
+                    if(analysis) detailedEmails.push(analysis);
 
-            } catch (e) {
-                console.error(`Error fetching thread ${threadId}: ${e.message}`);
-            }
-        }));
+                } catch (e) {
+                    console.error(`Error fetching thread ${threadId}: ${e.message}`);
+                }
+            }));
     }
 
     // Sort by timestamp descending
@@ -191,13 +195,14 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
 
     // FALLBACK: If Thread details were partial (no headers), fetch the specific message
     if (headers.length === 0) {
-        console.log(`[WARN] Thread ${threadData.id} missing headers. Fetching full message ${primaryMsg.id}...`);
+        console.log(`[WARN] Thread ${threadData.id} missing headers. Fetching metadata for ${primaryMsg.id}...`);
         try {
             // Using passed 'gmail' instance for efficiency
             const fullMsg = await gmail.users.messages.get({
                 userId: 'me',
                 id: primaryMsg.id,
-                format: 'full'
+                format: 'metadata',
+                metadataHeaders: ['From', 'Date', 'Subject']
             });
             payload = fullMsg.data.payload || {};
             headers = payload.headers || [];
@@ -249,7 +254,7 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
         const p = msg.payload || {};
         const labelIds = msg.labelIds || [];
 
-        // Resume Check
+        // Resume Check - Metadata format still sends parts structure with filenames!
         if (p.parts) {
             const files = p.parts
                 .filter(part => part.filename && part.filename.length > 0)
