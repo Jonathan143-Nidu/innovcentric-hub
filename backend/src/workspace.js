@@ -163,10 +163,24 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                 // Analyze
                 const data = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
                 if (data) {
-                    // --- POST-FETCH FILTER REMOVED ---
-                    // Reverting to raw Gmail API results to restore missing data.
-                    // We will rely purely on the 'q' parameter for now.
-                    detailedEmails.push(data);
+                    // --- POST-FETCH FILTER RESTORED v5.37 ---
+                    // Prevent "Dec 18" data from showing up when user asks for "Dec 25".
+                    // Buffer: Start - 2 Days (Safe) | End + 1 Day
+                    let isValid = true;
+                    if (startDate) {
+                        const cleanStart = formatDateForGmail(startDate, false);
+                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - (86400000 * 2);
+                        if (data.sort_epoch < startTs) isValid = false;
+                    }
+                    if (endDate && isValid) {
+                        const cleanEnd = formatDateForGmail(endDate, false);
+                        const endTs = new Date(cleanEnd).setHours(23, 59, 59, 999);
+                        if (data.sort_epoch > endTs) isValid = false;
+                    }
+
+                    if (isValid) {
+                        detailedEmails.push(data);
+                    }
                 }
             } catch (e) {
                 console.warn(`Error processing thread ${threadMsgs[0].threadId}:`, e.message);
