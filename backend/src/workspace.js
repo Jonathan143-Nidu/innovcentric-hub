@@ -245,15 +245,24 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     // Let's use the Subject from the LATEST message to be accurate to the email shown.
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
 
-    // FROM: The sender of the LATEST message. 
-    // If we sent it (SENT label), we might want to show "To: X" or "Me".
-    // But for "Inbox" view, showing the *Last Interaction* is standard.
-    // If 'SENT' is in the labels of the latest message, it means WE replied last.
-    // In that case, maybe we still want to show the candidate's name?
-    // Let's keep it simple: Show the sender of the LATEST message.
-    const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
+    // FROM: Use the PRIMARY (First Incoming) message to identify the Counterparty.
+    // If we rely on 'latestMsg', and we replied last, the row says "From: Us", which is confusing.
+    let fromHeaders = primaryMsg.payload?.headers;
+
+    // Fallback: If primary message details are missing, try to fetch or default to latest
+    if (!fromHeaders && primaryMsg.id !== latestMsg.id) {
+        try {
+            const pmFull = await gmail.users.messages.get({ userId: 'me', id: primaryMsg.id, format: 'metadata', metadataHeaders: ['From'] });
+            fromHeaders = pmFull.data.payload?.headers;
+        } catch (e) { console.warn("Failed to fetch primary msg headers"); }
+    }
+
+    // Final fallback to latest if still nothing
+    if (!fromHeaders) fromHeaders = headers;
+
+    const fromRaw = fromHeaders?.find(h => h.name === 'From')?.value || 'Unknown';
     const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw.replace(/"/g, '').trim();
-    const fromName = fromEmail;
+    const fromName = fromEmail; // Simplify to email/name for display
 
     // DATE: This defines where it sits in the list. MUST BE LATEST.
     const internalDate = parseInt(latestMsg.internalDate, 10);
