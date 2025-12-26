@@ -165,10 +165,14 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                     const msgTime = data.sort_epoch; // Milliseconds
 
                     // 1. Check Start Date (00:00:00)
+                    // 1. Check Start Date
                     if (startDate) {
                         // Normalize! new Date("24-12-2025") fails in Node.
                         const cleanStart = formatDateForGmail(startDate, false); // YYYY/MM/DD
-                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0);
+                        // TIMEZONE FIX: User is UTC+5:30.
+                        // If we filter strict UTC 00:00, we miss 5.5 hours of their day.
+                        // Safer to subtract 1 day buffer for the "Double Check".
+                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - 86400000;
                         if (msgTime < startTs) isValid = false;
                     }
 
@@ -283,9 +287,11 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     let resumeFiles = [];
 
     // Analyze thread for statuses
-    const hasSentMsg = messages.some(m => m.labelIds.includes('SENT'));
-    const hasReceivedMsg = messages.some(m => !m.labelIds.includes('SENT'));
-    if (hasSentMsg && hasReceivedMsg) {
+    // REPLIED CHECK: Simple & Strict
+    // If there is more than 1 message, AND the latest one is SENT by us, then we replied.
+    // If there is 1 message and it's SENT, it's just an outbound email (not a reply to a thread).
+    // If there are multiple messages but the last one is RECEIVED, we are "waiting" (not replied *last*).
+    if (messages.length > 1 && latestMsg.labelIds.includes('SENT')) {
         replied = true;
     }
 
