@@ -196,13 +196,16 @@ function App() {
           if (seenIds.has(email.id)) return; // Skip duplicates
           seenIds.add(email.id);
 
-          // Date specific filtering/verification (Backend does it, but good to ensure)
+          // Format Date Cleanly (e.g., "Oct 24, 2025, 2:30 PM")
           const date = new Date(email.updated_at || email.timestamp);
-          const dateStr = date.toLocaleString('en-US', {
-            month: '2-digit', day: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
-            timeZoneName: 'short'
-          });
+          const dateStr = new Intl.DateTimeFormat('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }).format(date);
 
           // Inbox
           if (email.analysis && email.analysis.is_inbox) {
