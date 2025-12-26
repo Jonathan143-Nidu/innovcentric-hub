@@ -155,16 +155,40 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                 });
 
                 // Analyze
-                const analysis = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
-                if (analysis) detailedEmails.push(analysis);
+                const data = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
+                if (data) {
+                    // --- POST-FETCH FILTER (The "Double Check") ---
+                    // Gmail API 'q' is search-based and sometimes fuzzy (e.g. older thread state).
+                    // We STRICTLY discard anything that doesn't match the requested epoch range.
 
+                    let isValid = true;
+                    const msgTime = data.sort_epoch; // Milliseconds
+
+                    // 1. Check Start Date (00:00:00)
+                    if (startDate) {
+                        const startTs = new Date(startDate).setHours(0, 0, 0, 0);
+                        if (msgTime < startTs) isValid = false;
+                    }
+
+                    // 2. Check End Date (23:59:59)
+                    if (endDate && isValid) {
+                        const endTs = new Date(endDate).setHours(23, 59, 59, 999);
+                        if (msgTime > endTs) isValid = false;
+                    }
+
+                    if (isValid) {
+                        detailedEmails.push(data);
+                    } else {
+                        // console.log(`[Filter] Discarded ${data.id} (${new Date(msgTime).toISOString()}) - Out of Range`);
+                    }
+                }
             } catch (e) {
-                console.error(`Error processing thread ${threadId}:`, e.message);
+                console.warn(`Error processing thread ${threadMsgs[0].threadId}:`, e.message);
             }
         }));
     }
 
-    // Sort
+    // Sort by latest first
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
     // Meta attachment (Javascript array property hack to pass stats)
