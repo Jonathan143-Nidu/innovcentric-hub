@@ -260,11 +260,13 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     let resumeFiles = [];
 
     // Analyze thread for statuses
-    // REPLIED CHECK: Simple & Strict
-    // If there is more than 1 message, AND the latest one is SENT by us, then we replied.
-    // If there is 1 message and it's SENT, it's just an outbound email (not a reply to a thread).
-    // If there are multiple messages but the last one is RECEIVED, we are "waiting" (not replied *last*).
-    if (messages.length > 1 && latestMsg.labelIds.includes('SENT')) {
+    // REPLIED CHECK: v5.35
+    // 1. Must be an INBOUND thread (Primary message is NOT 'SENT').
+    // 2. We must have responded LAST (Latest message IS 'SENT').
+    const primaryIsInbound = !primaryMsg.labelIds.includes('SENT');
+    const latestIsOutbound = latestMsg.labelIds.includes('SENT');
+
+    if (primaryIsInbound && latestIsOutbound) {
         replied = true;
     }
 
