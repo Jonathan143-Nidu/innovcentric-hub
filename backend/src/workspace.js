@@ -179,57 +179,64 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 }
 
 // --- Helper: Analyze a Whole Thread ---
+// --- Helper: Analyze a Whole Thread ---
 async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
     if (!threadData || !threadData.messages) return null;
     const messages = threadData.messages;
     if (messages.length === 0) return null;
 
-    // FIND THE "PRIMARY" MESSAGE (The one we received, to get Sender/Subject)
-    // We look for the first message that is NOT sent by us.
-    // If all are sent by us (e.g. we started thread), use the first one.
+    // SORTING: Gmail usually returns chronologically, but let's be safe.
+    // We want the LATEST message for the Date/Timestamp.
+    const latestMsg = messages[messages.length - 1];
+
+    // IDENTIFY PRIMARY (For Subject/Context) - usually the first one or first incoming
     const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
 
-    // console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Primary: ${primaryMsg.id}`);
+    // console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Latest: ${latestMsg.id}`);
 
-    let payload = primaryMsg.payload || {};
+    let payload = latestMsg.payload || {};
     let headers = payload.headers || [];
 
-    // FALLBACK: If Thread details were partial (no headers), fetch the specific message
+    // Fallback if latest message is partial (rare in threads.get with metadata)
     if (headers.length === 0) {
-        console.log(`[WARN] Thread ${threadData.id} missing headers. Fetching metadata for ${primaryMsg.id}...`);
         try {
-            // Using passed 'gmail' instance for efficiency
             const fullMsg = await gmail.users.messages.get({
                 userId: 'me',
-                id: primaryMsg.id,
+                id: latestMsg.id,
                 format: 'metadata',
                 metadataHeaders: ['From', 'Date', 'Subject']
             });
             payload = fullMsg.data.payload || {};
             headers = payload.headers || [];
-            console.log(`[RECOVERED] Found ${headers.length} headers after fallback.`);
         } catch (e) {
-            console.error(`[ERROR] Failed to recover message ${primaryMsg.id}: ${e.message}`);
+            console.error(`[ERROR] Failed to fetch latest msg ${latestMsg.id}: ${e.message}`);
         }
     }
 
+    // SUBJECT: Prefer the Subject from the LATEST message (it might have "Re:" or changed)
+    // Or stick to primary for clean "Role Name"? 
+    // Let's use the Subject from the LATEST message to be accurate to the email shown.
     const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
-    // Parse From header: "Name <email>" -> Extract Email ID
+
+    // FROM: The sender of the LATEST message. 
+    // If we sent it (SENT label), we might want to show "To: X" or "Me".
+    // But for "Inbox" view, showing the *Last Interaction* is standard.
+    // If 'SENT' is in the labels of the latest message, it means WE replied last.
+    // In that case, maybe we still want to show the candidate's name?
+    // Let's keep it simple: Show the sender of the LATEST message.
     const fromRaw = headers.find(h => h.name === 'From')?.value || 'Unknown';
-    // Regex to extract email inside <...>, or fallback to the raw string if no brackets
     const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw.replace(/"/g, '').trim();
-    // User requested Email ID instead of Name
     const fromName = fromEmail;
 
-    // Date: Normalized to ISO from Internal Date (Epoch) for accuracy
-    const internalDate = parseInt(primaryMsg.internalDate, 10);
+    // DATE: This defines where it sits in the list. MUST BE LATEST.
+    const internalDate = parseInt(latestMsg.internalDate, 10);
     const dateRaw = headers.find(h => h.name === 'Date')?.value;
     const timestamp = !isNaN(internalDate)
         ? new Date(internalDate).toISOString()
         : (dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString());
 
-    // Summary (Snippet)
-    const summary = primaryMsg.snippet || "";
+    // Summary (Snippet of latest message)
+    const summary = latestMsg.snippet || "";
 
     // Aggregate Statuses across the whole thread
     let hasResume = false;
@@ -274,7 +281,9 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
 
         if (labelIds.includes('SENT')) isSent = true;
 
-        // Strict Inbox Check
+        // Strict Inbox Check - If ANY message in thread is in INBOX, the thread is in Inbox?
+        // Usually yes. Archiving a thread removes INBOX from all?
+        // Let's check if the LATEST message is in Inbox.
         if (labelIds.includes('INBOX')) isInbox = true;
     });
 
@@ -300,7 +309,7 @@ async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
         from: fromName,
         summary: summary,
         updated_at: timestamp,
-        sort_epoch: parseInt(primaryMsg.internalDate, 10),
+        sort_epoch: parseInt(latestMsg.internalDate, 10), // Sort by LATEST
         analysis: {
             has_resume: hasResume,
             resume_filenames: [...new Set(resumeFiles)],
