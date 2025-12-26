@@ -57,16 +57,37 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
     // 1. Construct Query
     let query = '-in:trash -in:spam -in:drafts';
+
+    // Strict Date Formatting (YYYY/MM/DD) to satisfy Gmail API
+    const formatDateForGmail = (dateStr) => {
+        if (!dateStr) return null;
+        try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return null;
+            // Ensure YYYY/MM/DD format
+            return d.toISOString().split('T')[0].replace(/-/g, '/');
+        } catch (e) {
+            console.error("Date Parse Error:", e);
+            return null;
+        }
+    };
+
     if (startDate) {
-        const startStr = startDate.replace(/-/g, '/');
-        query += ` after:${startStr}`;
+        const startStr = formatDateForGmail(startDate);
+        if (startStr) query += ` after:${startStr}`;
     }
+
     if (endDate) {
+        // End Date is exclusive in Gmail "before:", so add 1 day
         const d = new Date(endDate);
-        d.setDate(d.getDate() + 1);
-        const nextDay = d.toISOString().split('T')[0].replace(/-/g, '/');
-        query += ` before:${nextDay}`;
+        if (!isNaN(d.getTime())) {
+            d.setDate(d.getDate() + 1);
+            const nextDayStr = d.toISOString().split('T')[0].replace(/-/g, '/');
+            query += ` before:${nextDayStr}`;
+        }
     }
+
+    console.log(`[Gmail Query] User: ${userEmail} | Query: [${query}]`);
 
     let allMessages = [];
     let nextToken = null;
