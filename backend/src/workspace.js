@@ -166,13 +166,16 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
                     // 1. Check Start Date (00:00:00)
                     if (startDate) {
-                        const startTs = new Date(startDate).setHours(0, 0, 0, 0);
+                        // Normalize! new Date("24-12-2025") fails in Node.
+                        const cleanStart = formatDateForGmail(startDate, false); // YYYY/MM/DD
+                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0);
                         if (msgTime < startTs) isValid = false;
                     }
 
                     // 2. Check End Date (23:59:59)
                     if (endDate && isValid) {
-                        const endTs = new Date(endDate).setHours(23, 59, 59, 999);
+                        const cleanEnd = formatDateForGmail(endDate, false); // YYYY/MM/DD
+                        const endTs = new Date(cleanEnd).setHours(23, 59, 59, 999);
                         if (msgTime > endTs) isValid = false;
                     }
 

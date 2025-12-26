@@ -583,7 +583,7 @@ function App() {
           </button>
         )}
         <div className={`text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
-          v5.25 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
+          v5.29 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
         </div>
       </div>
     </div>
