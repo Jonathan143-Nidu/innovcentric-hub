@@ -59,32 +59,51 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     let query = '-in:trash -in:spam -in:drafts';
 
     // Strict Date Formatting (YYYY/MM/DD) to satisfy Gmail API
-    const formatDateForGmail = (dateStr) => {
+    // Strict Date Formatting (YYYY/MM/DD) to satisfy Gmail API
+    const formatDateForGmail = (dateStr, isEndDate = false) => {
         if (!dateStr) return null;
-        try {
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return null;
-            // Ensure YYYY/MM/DD format
-            return d.toISOString().split('T')[0].replace(/-/g, '/');
-        } catch (e) {
-            console.error("Date Parse Error:", e);
-            return null;
+
+        let targetDate;
+
+        // Handle DD-MM-YYYY (Common localized input)
+        if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+            const [d, m, y] = dateStr.split('-');
+            targetDate = new Date(`${y}-${m}-${d}T00:00:00Z`); // Force UTC
         }
+        // Handle YYYY-MM-DD (Standard ISO)
+        else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            targetDate = new Date(`${dateStr}T00:00:00Z`); // Force UTC
+        }
+        // Fallback
+        else {
+            targetDate = new Date(dateStr);
+        }
+
+        if (isNaN(targetDate.getTime())) {
+            throw new Error(`Invalid Date Format: ${dateStr}`);
+        }
+
+        if (isEndDate) {
+            // Add 1 Day for "before:" (Exclusive)
+            targetDate.setUTCDate(targetDate.getUTCDate() + 1);
+        }
+
+        return targetDate.toISOString().split('T')[0].replace(/-/g, '/');
     };
 
-    if (startDate) {
-        const startStr = formatDateForGmail(startDate);
-        if (startStr) query += ` after:${startStr}`;
-    }
-
-    if (endDate) {
-        // End Date is exclusive in Gmail "before:", so add 1 day
-        const d = new Date(endDate);
-        if (!isNaN(d.getTime())) {
-            d.setDate(d.getDate() + 1);
-            const nextDayStr = d.toISOString().split('T')[0].replace(/-/g, '/');
-            query += ` before:${nextDayStr}`;
+    try {
+        if (startDate) {
+            const startStr = formatDateForGmail(startDate);
+            query += ` after:${startStr}`;
         }
+
+        if (endDate) {
+            const endStr = formatDateForGmail(endDate, true);
+            query += ` before:${endStr}`;
+        }
+    } catch (e) {
+        console.error("Date Query Build Failed:", e.message);
+        throw e; // Fail the request rather than leaking all data
     }
 
     console.log(`[Gmail Query] User: ${userEmail} | Query: [${query}]`);
