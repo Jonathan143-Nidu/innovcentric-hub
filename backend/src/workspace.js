@@ -157,38 +157,10 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                 // Analyze
                 const data = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
                 if (data) {
-                    // --- POST-FETCH FILTER (The "Double Check") ---
-                    // Gmail API 'q' is search-based and sometimes fuzzy (e.g. older thread state).
-                    // We STRICTLY discard anything that doesn't match the requested epoch range.
-
-                    let isValid = true;
-                    const msgTime = data.sort_epoch; // Milliseconds
-
-                    // 1. Check Start Date (00:00:00)
-                    // 1. Check Start Date
-                    if (startDate) {
-                        // Normalize! new Date("24-12-2025") fails in Node.
-                        const cleanStart = formatDateForGmail(startDate, false); // YYYY/MM/DD
-                        // TIMEZONE FIX: User is UTC+5:30.
-                        // If we filter strict UTC 00:00, we miss 5.5 hours of their day.
-                        // Safer to subtract 2 day buffer for the "Double Check".
-                        // Use 48 hours to be absolutely safe against any timezone/server date weirdness.
-                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - (86400000 * 2);
-                        if (msgTime < startTs) isValid = false;
-                    }
-
-                    // 2. Check End Date (23:59:59)
-                    if (endDate && isValid) {
-                        const cleanEnd = formatDateForGmail(endDate, false); // YYYY/MM/DD
-                        const endTs = new Date(cleanEnd).setHours(23, 59, 59, 999);
-                        if (msgTime > endTs) isValid = false;
-                    }
-
-                    if (isValid) {
-                        detailedEmails.push(data);
-                    } else {
-                        // console.log(`[Filter] Discarded ${data.id} (${new Date(msgTime).toISOString()}) - Out of Range`);
-                    }
+                    // --- POST-FETCH FILTER REMOVED ---
+                    // Reverting to raw Gmail API results to restore missing data.
+                    // We will rely purely on the 'q' parameter for now.
+                    detailedEmails.push(data);
                 }
             } catch (e) {
                 console.warn(`Error processing thread ${threadMsgs[0].threadId}:`, e.message);
