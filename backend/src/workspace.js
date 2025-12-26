@@ -171,8 +171,9 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                         const cleanStart = formatDateForGmail(startDate, false); // YYYY/MM/DD
                         // TIMEZONE FIX: User is UTC+5:30.
                         // If we filter strict UTC 00:00, we miss 5.5 hours of their day.
-                        // Safer to subtract 1 day buffer for the "Double Check".
-                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - 86400000;
+                        // Safer to subtract 2 day buffer for the "Double Check".
+                        // Use 48 hours to be absolutely safe against any timezone/server date weirdness.
+                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - (86400000 * 2);
                         if (msgTime < startTs) isValid = false;
                     }
 
