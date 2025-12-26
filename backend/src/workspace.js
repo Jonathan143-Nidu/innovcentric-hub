@@ -149,7 +149,12 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
     // Meta attachment (Javascript array property hack to pass stats)
-    detailedEmails.meta = { fetched: allMessages.length, nextToken, total: totalEstimate };
+    detailedEmails.meta = {
+        fetched: allMessages.length,
+        nextToken,
+        total: totalEstimate,
+        query_debug: query
+    };
 
     return detailedEmails;
 }

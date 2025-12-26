@@ -270,7 +270,11 @@ function App() {
           });
         }
 
-        alert("Data Updated!");
+        // 3. Totals
+        // ... (totals calculation preserved)
+
+        const debugQ = data.meta ? data.meta.query_debug : "N/A";
+        alert(`Data Updated!\nRecords: ${flattenedActivities.length}\nQuery: ${debugQ}`);
 
       } else {
         alert("Error: " + data.error);

@@ -114,7 +114,8 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
         if (!getUserActivity) throw new Error("Backend Module 'workspace.js' failed to load.");
 
         console.log('Received request to collect data...');
-        const { startDate, endDate, targetEmail } = req.body;
+        const { startDate, endDate, targetEmail, pageToken } = req.body;
+        console.log(`[Collect] Request for ${targetEmail} | Start: ${startDate} | End: ${endDate}`);
 
         const ADMIN_EMAIL = 'hiring@innovcentric.com';
         const DOMAIN = 'innovcentric.com';
