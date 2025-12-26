@@ -93,7 +93,13 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 
     try {
         if (startDate) {
-            const startStr = formatDateForGmail(startDate);
+            // TIMEZONE FIX: Shift -1 Day for Gmail Backend
+            // IST is +5.30. 00:00 IST is Previous Day 18:30 UTC.
+            // Standard "after:YYYY/MM/DD" uses 00:00 UTC, skipping early IST morning.
+            // We force "yesterday" to catch everything.
+            const sDate = new Date(startDate);
+            sDate.setDate(sDate.getDate() - 1);
+            const startStr = formatDateForGmail(sDate.toISOString(), false);
             query += ` after:${startStr}`;
         }
 
