@@ -51,11 +51,21 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState('inbox'); // 'inbox' or 'sent'
   const [stats, setStats] = useState({});
+  const [notification, setNotification] = useState(null); // { type: 'success'|'error', title, message }
+
 
   // Data Lists
   const [userRows, setUserRows] = useState([]);
   const [inboxList, setInboxList] = useState([]);
   const [totals, setTotals] = useState({ inbox: 0 });
+
+  // Auto-dismiss notification
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   // Init Sorting Hooks
   const { items: sortedInbox } = useSortedData(inboxList, { key: 'date', direction: 'descending' });
@@ -226,14 +236,30 @@ function App() {
         }
 
         const debugQ = data.meta ? data.meta.query_debug : "N/A";
-        alert(`Data Updated!\nRecords: ${flattenedActivities.length}\nQuery: ${debugQ}`);
+        setNotification({
+          type: 'success',
+          title: 'Data Updated',
+          message: `Fetched ${flattenedActivities.length} records successfully.`
+        });
+
+        // alert(`Data Updated!\nRecords: ${flattenedActivities.length}\nQuery: ${debugQ}`);
 
       } else {
-        alert("Error: " + data.error);
+        setNotification({
+          type: 'error',
+          title: 'Error Fetching Data',
+          message: data.error || 'Unknown error occurred.'
+        });
+        // alert("Error: " + data.error);
       }
-    } catch (err) {
-      console.error(err);
-      alert(`Data Collection Failed: ${err.message}`);
+    } catch (error) {
+      console.error(error);
+      setNotification({
+        type: 'error',
+        title: 'Connection Failed',
+        message: error.message
+      });
+      // alert("Error: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -430,7 +456,7 @@ function App() {
               <div className="flex items-center space-x-4">
                 <div className={`text-[10px] font-mono px-2 py-1 rounded border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-transparent text-gray-400 border-transparent'}`}>
                   <div className="text-gray-400 text-xs">
-                    v5.54 (Secure) | Fetched: {stats.fetched || 0}
+                    v5.55 (New UI) | Fetched: {stats.fetched || 0}
                   </div>
                 </div>
 
@@ -451,6 +477,38 @@ function App() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Toast Notification */}
+        {notification && (
+          <div className={`fixed bottom-4 right-4 max-w-sm w-full bg-white shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden transform transition-all duration-300 ease-out z-50 animate-slide-in`}>
+            <div className="p-4">
+              <div className="flex items-start">
+                <div className="flex-shrink-0">
+                  {notification.type === 'success' ? (
+                    <div className="h-6 w-6 text-green-400">✅</div>
+                  ) : (
+                    <div className="h-6 w-6 text-red-400">⚠️</div>
+                  )}
+                </div>
+                <div className="ml-3 w-0 flex-1 pt-0.5">
+                  <p className="text-sm font-medium text-gray-900">{notification.title}</p>
+                  <p className="mt-1 text-sm text-gray-500">{notification.message}</p>
+                </div>
+                <div className="ml-4 flex-shrink-0 flex">
+                  <button
+                    className="bg-white rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none"
+                    onClick={() => setNotification(null)}
+                  >
+                    <span className="sr-only">Close</span>
+                    <span className="text-xl">&times;</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            {/* Auto-dismiss progress bar (Optional, implied by useEffect) */}
+            <div className={`h-1 w-full ${notification.type === 'success' ? 'bg-green-500' : 'bg-red-500'} opacity-30`}></div>
           </div>
         )}
       </main>
