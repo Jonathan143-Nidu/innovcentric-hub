@@ -22,94 +22,44 @@ async function listAllUsers(domain, adminEmail) {
     return res.data.users || [];
 }
 
-// --- Helper: Convert Local Date String to US/Eastern Epoch Seconds ---
-function getEasternEpoch(dateString, isEnd = false) {
-    if (!dateString) return null;
 
-    const [y, m, d] = dateString.split('-').map(Number);
-    const date = new Date(Date.UTC(y, m - 1, d, 5, 0, 0)); // 5 AM UTC -> ~Midnight EST
-
-    if (isEnd) {
-        date.setDate(date.getDate() + 1);
-    }
-
-    return Math.floor(date.getTime() / 1000); // Return seconds
-}
-
-// --- Helper: Get User Activity (Inbox + Sent) ---
-// --- Helper: Get User Activity (Inbox + Sent) ---
+// --- Helper: Get User Activity (Inbox Only) ---
 async function getUserActivity(authClient, userEmail, startDate, endDate, pageToken = null) {
     const gmail = google.gmail({ version: 'v1', auth: authClient });
 
-    // 0. Get Labels (for RTR detection) - fail soft
-    const rtrLabelIds = new Set();
-    try {
-        const labelsRes = await gmail.users.labels.list({ userId: 'me' });
-        const labels = labelsRes.data.labels || [];
-        labels.forEach(l => {
-            if (l.name.toLowerCase().includes('rtr') || l.name.toLowerCase().includes('submission')) {
-                rtrLabelIds.add(l.id);
-            }
-        });
-    } catch (e) {
-        console.warn(`[Labels] Failed to fetch labels for ${userEmail}: ${e.message}`);
-    }
+    // 1. Construct Query - STRICTLY INBOX
+    // Using label:INBOX ensures we don't get Sent items or Trash
+    let query = 'label:INBOX -in:trash -in:spam';
 
-    // 1. Construct Query
-    let query = '-in:trash -in:spam -in:drafts';
-
-    // Strict Date Formatting (YYYY/MM/DD) to satisfy Gmail API
-    // Strict Date Formatting (YYYY/MM/DD) to satisfy Gmail API
-    const formatDateForGmail = (dateStr, isEndDate = false) => {
-        if (!dateStr) return null;
-
-        let targetDate;
-
-        // Handle DD-MM-YYYY (Common localized input)
-        if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
-            const [d, m, y] = dateStr.split('-');
-            targetDate = new Date(`${y}-${m}-${d}T00:00:00Z`); // Force UTC
-        }
-        // Handle YYYY-MM-DD (Standard ISO)
-        else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-            targetDate = new Date(`${dateStr}T00:00:00Z`); // Force UTC
-        }
-        // Fallback
-        else {
-            targetDate = new Date(dateStr);
-        }
-
-        if (isNaN(targetDate.getTime())) {
-            throw new Error(`Invalid Date Format: ${dateStr}`);
-        }
-
-        if (isEndDate) {
-            // Add 1 Day for "before:" (Exclusive)
-            targetDate.setUTCDate(targetDate.getUTCDate() + 1);
-        }
-
-        return targetDate.toISOString().split('T')[0].replace(/-/g, '/');
+    // Simple date adjustment helper (YYYY-MM-DD format, no timezones)
+    const adjustDate = (dateStr, days) => {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const date = new Date(year, month - 1, day); // Local date
+        date.setDate(date.getDate() + days);
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
     };
+
+    // Convert YYYY-MM-DD to YYYY/MM/DD for Gmail
+    const formatForGmail = (dateStr) => dateStr.replace(/-/g, '/');
 
     try {
         if (startDate) {
-            // TIMEZONE FIX: Shift -1 Day for Gmail Backend
-            // IST is +5.30. 00:00 IST is Previous Day 18:30 UTC.
-            // Standard "after:YYYY/MM/DD" uses 00:00 UTC, skipping early IST morning.
-            // We force "yesterday" to catch everything.
-            const sDate = new Date(startDate);
-            sDate.setDate(sDate.getDate() - 1);
-            const startStr = formatDateForGmail(sDate.toISOString(), false);
-            query += ` after:${startStr}`;
+            // Gmail's "after:" is exclusive, so subtract 1 day
+            const adjustedStart = adjustDate(startDate, -1);
+            query += ` after:${formatForGmail(adjustedStart)}`;
         }
 
         if (endDate) {
-            const endStr = formatDateForGmail(endDate, true);
-            query += ` before:${endStr}`;
+            // Gmail's "before:" is exclusive, so add 1 day
+            const adjustedEnd = adjustDate(endDate, 1);
+            query += ` before:${formatForGmail(adjustedEnd)}`;
         }
     } catch (e) {
         console.error("Date Query Build Failed:", e.message);
-        throw e; // Fail the request rather than leaking all data
+        throw e;
     }
 
     console.log(`[Gmail Query] User: ${userEmail} | Query: [${query}]`);
@@ -117,6 +67,40 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     let allMessages = [];
     let nextToken = null;
     let totalEstimate = 0;
+    let exactTotal = 0;
+
+    // --- NEW: Exact Count Logic (First Request Only) ---
+    // If this is the first page (no pageToken), we count EVERYTHING first.
+    if (!pageToken) {
+        console.log(`[Count] Starting exact THREAD count for ${userEmail}...`);
+        try {
+            let tempToken = null;
+            let pageCount = 0;
+            const uniqueThreads = new Set();
+
+            do {
+                const res = await gmail.users.messages.list({
+                    userId: 'me',
+                    q: query,
+                    maxResults: 500,
+                    pageToken: tempToken,
+                    fields: 'nextPageToken,messages(threadId)' // Optimize: Fetch Thread IDs
+                });
+
+                const msgs = res.data.messages || [];
+                msgs.forEach(m => uniqueThreads.add(m.threadId));
+
+                tempToken = res.data.nextPageToken;
+                pageCount++;
+                if (pageCount > 50) break;
+            } while (tempToken);
+
+            exactTotal = uniqueThreads.size;
+            console.log(`[Count] Exact Thread Total: ${exactTotal}`);
+        } catch (e) {
+            console.error("Count failed", e);
+        }
+    }
 
     // 2. Single Page Fetch
     try {
@@ -160,22 +144,29 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
                     metadataHeaders: ['From', 'Subject', 'Date']
                 });
 
-                // Analyze
-                const data = await analyzeThread(threadDetails.data, rtrLabelIds, authClient, gmail);
+                const data = await analyzeThread(threadDetails.data, gmail);
                 if (data) {
-                    // --- POST-FETCH FILTER RESTORED v5.37 ---
-                    // Prevent "Dec 18" data from showing up when user asks for "Dec 25".
-                    // Buffer: Start - 2 Days (Safe) | End + 1 Day
+                    // Strict date filtering based on user's selected range
                     let isValid = true;
-                    if (startDate) {
-                        const cleanStart = formatDateForGmail(startDate, false);
-                        const startTs = new Date(cleanStart).setHours(0, 0, 0, 0) - (86400000 * 2);
-                        if (data.sort_epoch < startTs) isValid = false;
-                    }
-                    if (endDate && isValid) {
-                        const cleanEnd = formatDateForGmail(endDate, false);
-                        const endTs = new Date(cleanEnd).setHours(23, 59, 59, 999);
-                        if (data.sort_epoch > endTs) isValid = false;
+
+                    if (startDate || endDate) {
+                        // Extract just the date part from the email timestamp (YYYY-MM-DD)
+                        const emailDate = new Date(data.sort_epoch);
+                        // FIX: Use local time instead of UTC (toISOString) to avoid 1-day offset
+                        const y = emailDate.getFullYear();
+                        const m = String(emailDate.getMonth() + 1).padStart(2, '0');
+                        const d = String(emailDate.getDate()).padStart(2, '0');
+                        const emailDateStr = `${y}-${m}-${d}`;
+
+                        if (startDate) {
+                            const userStartDate = startDate.split('T')[0]; // Ensure YYYY-MM-DD format
+                            if (emailDateStr < userStartDate) isValid = false;
+                        }
+
+                        if (endDate && isValid) {
+                            const userEndDate = endDate.split('T')[0]; // Ensure YYYY-MM-DD format
+                            if (emailDateStr > userEndDate) isValid = false;
+                        }
                     }
 
                     if (isValid) {
@@ -191,11 +182,17 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
     // Sort by latest first
     detailedEmails.sort((a, b) => b.sort_epoch - a.sort_epoch);
 
-    // Meta attachment (Javascript array property hack to pass stats)
+    console.log(`[Result] Filtered Down To: ${detailedEmails.length} emails (from ${allMessages.length} fetched)`);
+    console.log(`[Result] Exact Total Meta: ${exactTotal}`);
+
+    // Meta attachment
+    // FAIL-SAFE: Total cannot be less than what we actually fetched and are returning.
+    const finalTotal = Math.max(exactTotal, detailedEmails.length, totalEstimate);
+
     detailedEmails.meta = {
         fetched: allMessages.length,
         nextToken,
-        total: totalEstimate,
+        total: finalTotal,
         query_debug: query
     };
 
@@ -203,262 +200,81 @@ async function getUserActivity(authClient, userEmail, startDate, endDate, pageTo
 }
 
 // --- Helper: Analyze a Whole Thread ---
-// --- Helper: Analyze a Whole Thread ---
-async function analyzeThread(threadData, rtrLabelIds, authClient, gmail) {
+// --- Helper: Analyze a Whole Thread (Simplified) ---
+async function analyzeThread(threadData, gmail) {
     if (!threadData || !threadData.messages) return null;
     const messages = threadData.messages;
     if (messages.length === 0) return null;
 
     // SORTING: Gmail usually returns chronologically, but let's be safe.
+    messages.sort((a, b) => parseInt(a.internalDate) - parseInt(b.internalDate));
+
     // We want the LATEST message for the Date/Timestamp.
     const latestMsg = messages[messages.length - 1];
 
-    // IDENTIFY PRIMARY (For Subject/Context) - usually the first one or first incoming
-    const primaryMsg = messages.find(m => !m.labelIds.includes('SENT')) || messages[0];
+    // IDENTIFY PRIMARY (First Incoming Message)
+    const primaryMsg = messages[0];
 
-    // console.log(`[DEBUG] Thread ${threadData.id} | Msgs: ${messages.length} | Latest: ${latestMsg.id}`);
+    // --- TIMESTAMPS ---
+    const latestTs = parseInt(latestMsg.internalDate, 10);
+    // const timestamp = new Date(latestTs).toISOString(); // Removed to avoid confusion
 
-    let payload = latestMsg.payload || {};
-    let headers = payload.headers || [];
-
-    // Fallback if latest message is partial (rare in threads.get with metadata)
-    if (headers.length === 0) {
-        try {
-            const fullMsg = await gmail.users.messages.get({
-                userId: 'me',
-                id: latestMsg.id,
-                format: 'metadata',
-                metadataHeaders: ['From', 'Date', 'Subject']
-            });
-            payload = fullMsg.data.payload || {};
-            headers = payload.headers || [];
-        } catch (e) {
-            console.error(`[ERROR] Failed to fetch latest msg ${latestMsg.id}: ${e.message}`);
-        }
-    }
-
-    // SUBJECT: Prefer the Subject from the LATEST message (it might have "Re:" or changed)
-    // Or stick to primary for clean "Role Name"? 
-    // Let's use the Subject from the LATEST message to be accurate to the email shown.
-    const subjectRaw = headers.find(h => h.name === 'Subject')?.value || '(No Subject)';
-
-    // FROM: Use the PRIMARY (First Incoming) message to identify the Counterparty.
-    // If we rely on 'latestMsg', and we replied last, the row says "From: Us", which is confusing.
+    // --- FROM / SENDER ---
+    // Use Primary Message (First Incoming) to identify the Counterparty
     let fromHeaders = primaryMsg.payload?.headers;
 
-    // Fallback: If primary message details are missing, try to fetch or default to latest
+    // Fallback: If primary message details are missing (lite fetch), try to get them
     if (!fromHeaders && primaryMsg.id !== latestMsg.id) {
         try {
-            const pmFull = await gmail.users.messages.get({ userId: 'me', id: primaryMsg.id, format: 'metadata', metadataHeaders: ['From'] });
+            const pmFull = await gmail.users.messages.get({ userId: 'me', id: primaryMsg.id, format: 'metadata', metadataHeaders: ['From', 'Subject'] });
             fromHeaders = pmFull.data.payload?.headers;
-        } catch (e) { console.warn("Failed to fetch primary msg headers"); }
+        } catch (e) {
+            // console.warn("Failed to fetch primary msg headers"); 
+        }
     }
-
     // Final fallback to latest if still nothing
-    if (!fromHeaders) fromHeaders = headers;
+    if (!fromHeaders) fromHeaders = latestMsg.payload?.headers;
 
     const fromRaw = fromHeaders?.find(h => h.name === 'From')?.value || 'Unknown';
     const fromEmail = fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw.replace(/"/g, '').trim();
-    const fromName = fromEmail; // Simplify to email/name for display
+    // For display, use Name if possible, else Email
+    const fromName = fromRaw.split('<')[0].replace(/"/g, '').trim() || fromEmail;
 
-    // DATE: This defines where it sits in the list. MUST BE LATEST.
-    const internalDate = parseInt(latestMsg.internalDate, 10);
-    const dateRaw = headers.find(h => h.name === 'Date')?.value;
-    const timestamp = !isNaN(internalDate)
-        ? new Date(internalDate).toISOString()
-        : (dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString());
+    // --- SUBJECT ---
+    const subjectRaw = fromHeaders?.find(h => h.name === 'Subject')?.value || '(No Subject)';
 
-    // Summary (Snippet of latest message)
+    // --- SUMMARY ---
     const summary = latestMsg.snippet || "";
 
-    // Aggregate Statuses across the whole thread
-    let hasResume = false;
-    let isRtr = false;
-    let isSent = false;
-    let isInbox = false;
-    let replied = false;
-    let resumeFiles = [];
+    // --- ANALYSIS ---
+    // 1. Is Inbox? (Inbound message exists) - With Query label:INBOX this is effectively always true, but we keep the flag.
+    const isInbox = messages.some(m => !m.labelIds.includes('SENT'));
 
-    // Analyze thread for statuses
-    // REPLIED CHECK: v5.35
-    // 1. Must be an INBOUND thread (Primary message is NOT 'SENT').
-    // 2. We must have responded LAST (Latest message IS 'SENT').
+    // 2. Replied Check (v5.39 Strict Logic)
+    let replied = false;
     const primaryIsInbound = !primaryMsg.labelIds.includes('SENT');
     const latestIsOutbound = latestMsg.labelIds.includes('SENT');
 
-    if (primaryIsInbound && latestIsOutbound) {
+    // Fix: Must have >1 message to be a "Reply" conversation
+    if (messages.length > 1 && primaryIsInbound && latestIsOutbound) {
         replied = true;
     }
 
-    // Check all messages in the thread for flags
-    messages.forEach(msg => {
-        const p = msg.payload || {};
-        const labelIds = msg.labelIds || [];
-
-        // Resume Check
-        if (p.parts) {
-            const files = p.parts
-                .filter(part => part.filename && part.filename.length > 0)
-                .map(part => part.filename);
-
-            // Filter by keywords
-            const keywords = ['resume', 'cv', 'profile', 'candidate', 'submission'];
-            const validResumes = files.filter(name => keywords.some(k => name.toLowerCase().includes(k)));
-
-            if (validResumes.length > 0) {
-                hasResume = true;
-                resumeFiles.push(...validResumes);
-            }
-        }
-
-        // RTR Check
-        const sub = (p.headers?.find(h => h.name === 'Subject')?.value || '').toLowerCase();
-        if (sub.includes('rtr') || sub.includes('right to represent')) isRtr = true;
-        if (labelIds.some(id => rtrLabelIds.has(id))) isRtr = true;
-
-        if (labelIds.includes('SENT')) isSent = true;
-
-        // Strict Inbox Check - If ANY message in thread is in INBOX, the thread is in Inbox?
-        // Usually yes. Archiving a thread removes INBOX from all?
-        // Let's check if the LATEST message is in Inbox.
-        if (labelIds.includes('INBOX')) isInbox = true;
-    });
-
-    // ROLE EXTRACTION
-    let roleDisplay = subjectRaw;
-    if (isRtr) {
-        roleDisplay = "RTR";
-    } else {
-        let clean = subjectRaw.replace(/^(Fwd|Re|Aw|Fw):\s*/i, '').trim();
-        const match = clean.match(/^([^|\-:]+)/);
-        if (match && match[1] && match[1].length < 50) {
-            roleDisplay = match[1].trim();
-        } else {
-            roleDisplay = clean;
-        }
-    }
-
-    const result = {
+    return {
         id: threadData.id,
-        timestamp: timestamp,
-        subject: roleDisplay,
-        original_subject: subjectRaw,
+        snippet: summary,
+        historyId: latestMsg.historyId,
+        valid: true,
+        sort_epoch: latestTs,  // Gmail's raw timestamp (milliseconds since epoch)
+        timestamp: latestTs,    // Same raw timestamp for compatibility
         from: fromName,
-        summary: summary,
-        updated_at: timestamp,
-        sort_epoch: parseInt(latestMsg.internalDate, 10), // Sort by LATEST
+        subject: subjectRaw,
         analysis: {
-            has_resume: hasResume,
-            resume_filenames: [...new Set(resumeFiles)],
-            is_rtr: isRtr,
-            is_sent: isSent,
-            is_inbox: isInbox,
+            is_inbox: isInbox, // Keeping for frontend compat
             is_replied: replied
         }
     };
-
-    // AI ENHANCEMENT FOR RTR THREADS
-    if (isRtr) {
-        let combinedBody = "";
-        const recentMsgs = messages.slice(-2);
-
-        recentMsgs.forEach(m => {
-            const bodyPart = getEmailBody(m);
-            combinedBody += bodyPart + "\n\n---\n\n";
-        });
-
-        // console.log(`[AI] Analyzing Thread RTR: ${subjectRaw}`);
-        try {
-            const aiResult = await require('./ai').extractRTRDetails(combinedBody, subjectRaw);
-            result.ai_data = aiResult;
-        } catch (e) {
-            console.warn(`[AI] Skipped for ${threadData.id}: ${e.message}`);
-        }
-    }
-
-    return result;
 }
 
-// --- Helper: Extract Plain Text Body ---
-function getEmailBody(messageData) {
-    let body = "";
-    const payload = messageData.payload;
-
-    if (payload.body && payload.body.data) {
-        body = Buffer.from(payload.body.data, 'base64').toString('utf-8');
-    } else if (payload.parts) {
-        // Find text/plain part
-        const textPart = payload.parts.find(p => p.mimeType === 'text/plain');
-        if (textPart && textPart.body && textPart.body.data) {
-            body = Buffer.from(textPart.body.data, 'base64').toString('utf-8');
-        } else {
-            // Fallback: Just join any part that has data (naive)
-            payload.parts.forEach(p => {
-                if (p.body && p.body.data) {
-                    body += Buffer.from(p.body.data, 'base64').toString('utf-8') + "\n";
-                }
-            });
-        }
-    }
-    return body;
-}
-
-// --- Helper: Analyze Email Content (Single Message Fallback) ---
-function analyzeEmail(messageData, rtrLabelIds = new Set()) {
-    const payload = messageData.payload || {};
-    const headers = payload.headers || [];
-
-    // Get basic info
-    const subjectHeader = headers.find(h => h.name === 'Subject');
-    const fromHeader = headers.find(h => h.name === 'From');
-    const toHeader = headers.find(h => h.name === 'To');
-    const dateHeader = headers.find(h => h.name === 'Date');
-
-    const subject = subjectHeader ? subjectHeader.value : '(No Subject)';
-    const from = fromHeader ? fromHeader.value : 'Unknown';
-    const to = toHeader ? toHeader.value : 'Unknown';
-    const date = dateHeader ? dateHeader.value : new Date().toISOString();
-
-    // Check for Attachments (Resumes)
-    let resumeFiles = [];
-    if (payload.parts) {
-        const keywords = ['resume', 'cv', 'profile', 'candidate', 'submission'];
-
-        resumeFiles = payload.parts
-            .filter(part => part.filename && part.filename.length > 0)
-            .map(part => part.filename)
-            .filter(name => {
-                const lowerName = name.toLowerCase();
-                return keywords.some(k => lowerName.includes(k));
-            });
-    }
-
-    // Detect if Sent or Inbox
-    const labelIds = messageData.labelIds || [];
-    const isSent = labelIds.includes('SENT');
-    const isInbox = labelIds.includes('INBOX');
-
-    // Check for RTR
-    const subLower = subject.toLowerCase();
-    let isRtr = subLower.includes('rtr') || subLower.includes('right to represent');
-
-    if (!isRtr && labelIds.length > 0) {
-        isRtr = labelIds.some(id => rtrLabelIds.has(id));
-    }
-
-    return {
-        id: messageData.id,
-        timestamp: date,
-        to: to,
-        subject: subject,
-        analysis: {
-            has_resume: resumeFiles.length > 0,
-            resume_filenames: resumeFiles,
-            is_rtr: isRtr,
-            is_sent: isSent,
-            is_inbox: isInbox
-        }
-    };
-}
 
 module.exports = { listAllUsers, getUserActivity };

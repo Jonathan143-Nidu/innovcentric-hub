@@ -37,40 +37,28 @@ const useSortedData = (items, config = null) => {
   return { items: sortedItems, requestSort, sortConfig };
 };
 
-const SortIcon = ({ direction }) => {
-  if (!direction) return <span className="text-gray-300 ml-1">⇅</span>;
-  return direction === 'ascending' ? <span className="text-blue-600 ml-1">↑</span> : <span className="text-blue-600 ml-1">↓</span>;
-};
-
-
 function App() {
   // Auth State
   const [token, setToken] = useState(null);
 
   // Dynamic Data State
   const [userList, setUserList] = useState([]);
-  const [selectedUser, setSelectedUser] = useState('all'); // 'all' or specific email
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'inbox', 'sent', 'rtr'
-
+  const [selectedUser, setSelectedUser] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1); // Track current page for "1-100 of X" display
+  const [viewMode, setViewMode] = useState('inbox'); // 'inbox' or 'sent'
   const [stats, setStats] = useState({});
-  const [error, setError] = useState(null); // For "All Users" summary
 
   // Data Lists
-  const [userRows, setUserRows] = useState([]); // For "All Users" summary
-  const [resumeList, setResumeList] = useState([]); // For "Sent" tab (Resumes)
-  const [inboxList, setInboxList] = useState([]); // For "Inbox" tab
-  const [rtrList, setRtrList] = useState([]);     // For "RTR" tab
-
-  // KPI Totals
-  const [totals, setTotals] = useState({ inbox: 0, sent: 0, rtrs: 0, resumes: 0 });
+  const [userRows, setUserRows] = useState([]);
+  const [inboxList, setInboxList] = useState([]);
+  const [totals, setTotals] = useState({ inbox: 0 });
 
   // Init Sorting Hooks
-  const { items: sortedInbox, requestSort: sortInbox, sortConfig: inboxSort } = useSortedData(inboxList, { key: 'date', direction: 'descending' });
-  const { items: sortedResumes, requestSort: sortResumes, sortConfig: resumeSort } = useSortedData(resumeList, { key: 'date', direction: 'descending' });
+  const { items: sortedInbox } = useSortedData(inboxList, { key: 'date', direction: 'descending' });
 
   // Login Handlers
   const handleLoginSuccess = (credentialResponse) => {
@@ -102,18 +90,15 @@ function App() {
       });
   }, [token]);
 
-
   // Main Data Collection
   const handleCollectData = async (pageToken = null) => {
     setLoading(true);
-    // Only reset lists if it's a fresh search (no pageToken)
+
     if (!pageToken) {
-      setPage(1);
+      setCurrentPage(1);
       setInboxList([]);
-      setResumeList([]);
-      setRtrList([]);
-      setUserRows([]); // Also reset user rows for a fresh load
-      setTotals({ inbox: 0, sent: 0, rtrs: 0, resumes: 0 }); // Reset totals
+      setUserRows([]);
+      setTotals({ inbox: 0 });
     }
 
     try {
@@ -127,18 +112,22 @@ function App() {
           startDate,
           endDate,
           targetEmail: selectedUser === 'all' ? 'All Users' : selectedUser,
-          pageToken // Pass token to backend
+          pageToken,
+          type: viewMode // 'inbox' or 'sent'
         })
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
         let errorMessage = response.statusText;
+
         try {
-          const errData = await response.json();
+          const errData = JSON.parse(errorText);
           if (errData && errData.error) errorMessage = errData.error;
-        } catch (e) {
+        } catch {
           // If JSON parse fails, use statusText
         }
+
         throw new Error(`Server Error: ${errorMessage}`);
       }
 
@@ -147,56 +136,49 @@ function App() {
       if (data.success) {
         if (data.stats) setStats(data.stats);
         const rawData = data.data || [];
-
         let newRows = [];
 
-        // 1. Process "All Users" Rows (Only for fresh load usually)
+        // Process "All Users" Rows
         if (!pageToken) {
           newRows = rawData.map(emp => {
-            if (emp.error) return { name: emp.employee_name, inbox: 0, sent: 0, rtrs: 0, error: emp.error };
-            const acts = emp.activities || [];
+            if (emp.error) return { name: emp.employee_name, inbox: 0, error: emp.error };
+            // v5.49 Fix: Check for new object structure { items, meta }
+            const acts = emp.activities ? (emp.activities.items || emp.activities) : [];
+            const metaTotal = emp.activities?.meta?.total || 0;
+            const fallbackTotal = acts.filter(a => a.analysis && a.analysis.is_inbox).length;
+
             return {
               name: emp.employee_name,
-              inbox: acts.filter(a => a.analysis && a.analysis.is_inbox).length,
-              sent: acts.filter(a => a.analysis && a.analysis.is_sent).length,
-              rtrs: acts.filter(a => a.analysis && a.analysis.is_rtr).length
+              inbox: Math.max(metaTotal, fallbackTotal) // Use the big number from backend
             };
           });
           setUserRows(newRows);
         }
 
-        // 2. Process Detailed Emails
+        // Process Detailed Emails
         const newInbox = [];
-        const newResumes = [];
-        const newRtrs = [];
-        const seenIds = new Set(); // Deduplication
-
-        // NORMALIZE DATA STRUCTURE
-        // Single User mode returns explicit List of Emails.
-        // All Users mode returns List of Employees objects with .activities array.
+        const seenIds = new Set();
         let flattenedActivities = [];
 
         if (rawData.length > 0) {
           if (rawData[0].activities) {
-            // Formatting for "All Users" (Nested)
             rawData.forEach(emp => {
-              if (emp.activities && Array.isArray(emp.activities)) {
-                flattenedActivities.push(...emp.activities);
+              // v5.52 Fix: Handle new object structure { items, meta }
+              const acts = emp.activities ? (emp.activities.items || emp.activities) : [];
+              if (Array.isArray(acts)) {
+                flattenedActivities.push(...acts);
               }
             });
           } else {
-            // Formatting for "Single User" (Flat)
             flattenedActivities = rawData;
           }
         }
 
-        // Process the flattened list
         flattenedActivities.forEach(email => {
           if (!email || !email.id) return;
-          if (seenIds.has(email.id)) return; // Skip duplicates
+          if (seenIds.has(email.id)) return;
           seenIds.add(email.id);
 
-          // Format Date Cleanly (e.g., "Oct 24, 2025, 2:30 PM")
           const date = new Date(email.updated_at || email.timestamp);
           const dateStr = new Intl.DateTimeFormat('en-US', {
             month: 'short',
@@ -204,10 +186,10 @@ function App() {
             year: 'numeric',
             hour: 'numeric',
             minute: '2-digit',
-            hour12: true
+            hour12: true,
+            timeZone: 'Asia/Kolkata'
           }).format(date);
 
-          // Inbox
           if (email.analysis && email.analysis.is_inbox) {
             newInbox.push({
               sort_epoch: email.sort_epoch || date.getTime(),
@@ -218,63 +200,30 @@ function App() {
               summary: email.summary || email.snippet || ""
             });
           }
-          // Resumes (Sent)
-          if (email.analysis && email.analysis.has_resume && email.analysis.is_sent) {
-            email.analysis.resume_filenames.forEach(fname => {
-              newResumes.push({
-                sort_epoch: email.sort_epoch || date.getTime(),
-                date: dateStr,
-                to: "Client/Vendor", // simplified
-                position: email.subject,
-                attachment: fname,
-                status: "Sent"
-              });
-            });
-          }
-          // RTR
-          if (email.analysis && email.analysis.is_rtr) {
-            const ai = email.ai_data || {};
-            newRtrs.push({
-              date: dateStr,
-              candidate: ai.candidate || selectedUser, // Use selectedUser if candidate not in AI
-              role: ai.position || email.subject,
-              vendor: ai.vendor || "Unknown Vendor",
-              rate: ai.rate || "N/A",
-              location: ai.location || "N/A"
-            });
-          }
         });
 
         if (!pageToken) {
           setInboxList(newInbox);
-          setRtrList(newRtrs);
-          setResumeList(newResumes);
         } else {
-          // Append if paginated
           setInboxList(prev => [...prev, ...newInbox]);
-          // ... others usually don't paginate in this view, but could
         }
 
-        // 3. Totals
-        // Use newRows (All Users) if available, otherwise sum the lists (Single User)
-        if (newRows.length > 0) {
+        // Calculate Totals
+        if (selectedUser === 'all' && newRows.length > 0) {
+          // Dashboard Mode (All Users)
           setTotals({
             inbox: newRows.reduce((a, b) => a + b.inbox, 0),
-            sent: newRows.reduce((a, b) => a + b.sent, 0),
-            rtrs: newRows.reduce((a, b) => a + b.rtrs, 0),
-            resumes: newResumes.length
           });
         } else {
-          setTotals({
-            inbox: newInbox.length,
-            sent: newResumes.length, // approximation for sent resumes
-            rtrs: newRtrs.length,
-            resumes: newResumes.length
-          });
+          // Single User Mode (Inbox View)
+          if (data.stats && data.stats.total) {
+            setTotals({ inbox: data.stats.total });
+          } else if (!pageToken) {
+            setTotals({ inbox: newInbox.length });
+          } else {
+            setTotals(prev => ({ inbox: prev.inbox + newInbox.length }));
+          }
         }
-
-        // 3. Totals
-        // ... (totals calculation preserved)
 
         const debugQ = data.meta ? data.meta.query_debug : "N/A";
         alert(`Data Updated!\nRecords: ${flattenedActivities.length}\nQuery: ${debugQ}`);
@@ -308,7 +257,6 @@ function App() {
   // Dashboard UI
   return (
     <div className="flex h-screen bg-gray-100 font-sans">
-
       {/* SIDEBAR */}
       <aside className="w-72 bg-white border-r p-6 space-y-6 flex flex-col">
         <h1 className="text-xl font-bold text-blue-600">Innovcentric Hub</h1>
@@ -318,11 +266,7 @@ function App() {
           <label className="text-xs font-semibold text-gray-500 uppercase">User Scope</label>
           <select
             value={selectedUser}
-            onChange={(e) => {
-              setSelectedUser(e.target.value);
-              // If switching to specific user, maybe auto-select 'inbox' or keep dashboard?
-              // For now user manually picks tab.
-            }}
+            onChange={(e) => setSelectedUser(e.target.value)}
             className="w-full mt-1 border rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">All Users</option>
@@ -345,6 +289,25 @@ function App() {
             onChange={(e) => setEndDate(e.target.value)}
             className="w-full border rounded px-3 py-2 text-sm"
           />
+        </div>
+
+        {/* View Mode Toggle */}
+        <div>
+          <label className="text-xs font-semibold text-gray-500 uppercase">Mode</label>
+          <div className="flex bg-gray-200 rounded p-1 mt-1">
+            <button
+              onClick={() => setViewMode('inbox')}
+              className={`flex-1 py-1 text-xs font-medium rounded ${viewMode === 'inbox' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
+            >
+              Inbox
+            </button>
+            <button
+              onClick={() => setViewMode('sent')}
+              className={`flex-1 py-1 text-xs font-medium rounded ${viewMode === 'sent' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}
+            >
+              Sent
+            </button>
+          </div>
         </div>
 
         {/* Action Button */}
@@ -372,19 +335,7 @@ function App() {
               onClick={() => setActiveTab('inbox')}
               className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${activeTab === 'inbox' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
             >
-              📥 Inbox ({totals.inbox})
-            </button>
-            <button
-              onClick={() => setActiveTab('sent')}
-              className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${activeTab === 'sent' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-            >
-              📤 Resumes Sent ({totals.resumes})
-            </button>
-            <button
-              onClick={() => setActiveTab('rtr')}
-              className={`w-full text-left px-3 py-2 rounded text-sm font-medium ${activeTab === 'rtr' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-            >
-              📝 RTRs ({totals.rtrs})
+              {viewMode === 'sent' ? '📤 Sent Items' : '📥 Inbox'} ({totals.inbox})
             </button>
           </nav>
         </div>
@@ -395,33 +346,9 @@ function App() {
       </aside>
 
       {/* MAIN CONTENT Area */}
-      <main className="flex-1 p-8 overflow-y-auto">
-
-        {/* TOP KPI CARDS (Always Visible or conditional? User asked for hidden in specific views, but usually KPIs are good at top) */}
-        {/* Let's follow the user's HTML logic: Card changes based on view, but general Dash has all 4 */}
-
+      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-gray-50 relative">
         {activeTab === 'dashboard' && (
-          <>
-            <div className="grid grid-cols-4 gap-6 mb-8">
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium">Total Inbox</p>
-                <p className="text-3xl font-bold text-gray-800 mt-2">{totals.inbox}</p>
-              </div>
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium">Total Sent</p>
-                <p className="text-3xl font-bold text-gray-800 mt-2">{totals.sent}</p>
-              </div>
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium">RTRs Detected</p>
-                <p className="text-3xl font-bold text-gray-800 mt-2">{totals.rtrs}</p>
-              </div>
-              <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500 font-medium">Resumes Submitted</p>
-                <p className="text-3xl font-bold text-blue-600 mt-2">{totals.resumes}</p>
-              </div>
-            </div>
-
-            {/* ALL USERS SUMMARY TABLE */}
+          <div className="flex-1 overflow-y-auto p-8">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="px-6 py-4 border-b border-gray-100">
                 <h2 className="text-lg font-semibold text-gray-800">Team Activity Report</h2>
@@ -430,9 +357,7 @@ function App() {
                 <thead className="bg-gray-50 text-gray-500 font-medium border-b">
                   <tr>
                     <th className="px-6 py-3">Employee</th>
-                    <th className="px-6 py-3">Inbox</th>
-                    <th className="px-6 py-3">Sent</th>
-                    <th className="px-6 py-3">RTRs</th>
+                    <th className="px-6 py-3">{viewMode === 'sent' ? 'Sent' : 'Inbox'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -440,155 +365,95 @@ function App() {
                     <tr key={idx} className="hover:bg-gray-50">
                       <td className="px-6 py-3 font-medium text-gray-900">{row.name}</td>
                       <td className="px-6 py-3">{row.inbox}</td>
-                      <td className="px-6 py-3">{row.sent}</td>
-                      <td className="px-6 py-3">{row.rtrs}</td>
                     </tr>
                   ))}
                   {userRows.length === 0 && (
-                    <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-400">No data collected yet.</td></tr>
+                    <tr><td colSpan="2" className="px-6 py-8 text-center text-gray-400">No data collected yet.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </>
+          </div>
         )}
 
-        {/* INBOX TABLE */}
         {activeTab === 'inbox' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-800">Inbox Log</h2>
-            </div>
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-500 font-medium border-b cursor-pointer select-none">
-                <tr>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('date')}>
-                    Date {inboxSort?.key === 'date' && <SortIcon direction={inboxSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('sender')}>
-                    Sender Name {inboxSort?.key === 'sender' && <SortIcon direction={inboxSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('subject')}>
-                    Subject (Role) {inboxSort?.key === 'subject' && <SortIcon direction={inboxSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortInbox('replied')}>
-                    Replied? {inboxSort?.key === 'replied' && <SortIcon direction={inboxSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3">Summary</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sortedInbox.length > 0 ? sortedInbox.map((item, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 text-gray-500 whitespace-nowrap">{item.date}</td>
-                    <td className="px-6 py-3 font-medium text-gray-800">{item.sender}</td>
-                    <td className="px-6 py-3 text-blue-600 font-medium">{item.subject}</td>
-                    <td className="px-6 py-3">
-                      {item.replied ?
-                        <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs">Yes</span> :
-                        <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded text-xs">No</span>
-                      }
-                    </td>
-                    <td className="px-6 py-3 text-gray-500 max-w-xs truncate" title={item.summary}>{item.summary}</td>
+          <div className="flex-1 flex flex-col h-full w-full bg-white">
+            {/* Table Container - Flex Grow to fill space */}
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm text-gray-500 font-semibold">
+                  <tr>
+                    <th className="p-3 border-b">Date</th>
+                    <th className="p-3 border-b">{viewMode === 'sent' ? 'Recipient' : 'Sender'}</th>
+                    <th className="p-3 border-b">Subject</th>
+                    <th className="p-3 border-b text-center">Replied?</th>
+                    <th className="p-3 border-b">Summary</th>
                   </tr>
-                )) : (
-                  <tr><td colSpan="5" className="px-6 py-8 text-center text-gray-400">No inbox data found.</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {sortedInbox.slice((currentPage - 1) * 100, currentPage * 100).map((row, idx) => (
+                    <tr key={idx} className="hover:bg-blue-50 transition-colors group">
+                      <td className="p-3 text-gray-500 whitespace-nowrap border-b border-gray-50 w-32">{row.date}</td>
+                      <td className="p-3 font-medium text-gray-900 border-b border-gray-50 w-48 truncate max-w-[12rem]">{row.sender}</td>
+                      <td className="p-3 text-gray-600 border-b border-gray-50 max-w-xs cursor-help" title={row.summary}>
+                        <span className="font-semibold text-blue-600 block truncate">{row.subject}</span>
+                      </td>
+                      <td className="p-3 text-center border-b border-gray-50 w-24">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${row.replied === 'Yes' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-300'}`}>
+                          {row.replied}
+                        </span>
+                      </td>
+                      <td className="p-3 text-gray-400 text-[10px] border-b border-gray-50 w-64 truncate max-w-xs">{row.summary}</td>
+                    </tr>
+                  ))}
+                  {sortedInbox.length === 0 && !loading && (
+                    <tr><td colSpan="5" className="p-10 text-center text-gray-400">No emails found for this period.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls - Stick to bottom of this panel only */}
+            <div className="bg-gray-50 border-t p-2 flex justify-between items-center shrink-0 z-20">
+              <button
+                onClick={() => setCurrentPage(c => Math.max(1, c - 1))}
+                disabled={currentPage === 1 || loading}
+                className="bg-white text-gray-700 px-4 py-1.5 rounded text-xs hover:bg-gray-100 disabled:opacity-50 font-medium border shadow-sm"
+              >
+                ⬅ Previous
+              </button>
+
+              <div className="text-xs font-mono font-bold text-gray-600">
+                Page {currentPage} | Showing {((currentPage - 1) * 100) + 1} - {Math.min(currentPage * 100, totals.inbox)} of {totals.inbox}
+              </div>
+
+              <div className="flex items-center space-x-4">
+                <div className={`text-[10px] font-mono px-2 py-1 rounded border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-transparent text-gray-400 border-transparent'}`}>
+                  <div className="text-gray-400 text-xs">
+                    v5.54 (Secure) | Fetched: {stats.fetched || 0}
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (sortedInbox.length > currentPage * 100) {
+                      setCurrentPage(c => c + 1);
+                    } else {
+                      handleCollectData(stats.nextToken).then(() => {
+                        setCurrentPage(c => c + 1);
+                      });
+                    }
+                  }}
+                  disabled={loading || (!stats.nextToken && sortedInbox.length <= currentPage * 100)}
+                  className="bg-blue-600 text-white px-4 py-1.5 rounded text-xs hover:bg-blue-700 disabled:opacity-50 shadow-sm font-medium"
+                >
+                  {loading ? 'Loading...' : (sortedInbox.length > currentPage * 100 ? 'Next Page ➡' : 'Fetch Cloud ☁')}
+                </button>
+              </div>
+            </div>
           </div>
         )}
-
-        {/* SENT RESUMES TABLE */}
-        {activeTab === 'sent' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-800">Resumes Submitted</h2>
-            </div>
-            <table className="w-full text-sm text-left">
-              <thead className="bg-gray-50 text-gray-500 font-medium border-b cursor-pointer select-none">
-                <tr>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('date')}>
-                    Date {resumeSort?.key === 'date' && <SortIcon direction={resumeSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('position')}>
-                    Position (Subject) {resumeSort?.key === 'position' && <SortIcon direction={resumeSort.direction} />}
-                  </th>
-                  <th className="px-6 py-3">Resume File</th>
-                  <th className="px-6 py-3 hover:bg-gray-100" onClick={() => sortResumes('status')}>
-                    Status {resumeSort?.key === 'status' && <SortIcon direction={resumeSort.direction} />}
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {sortedResumes.length > 0 ? sortedResumes.map((item, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 text-gray-500">{item.date}</td>
-                    <td className="px-6 py-3 text-gray-800">{item.position}</td>
-                    <td className="px-6 py-3 text-blue-600 cursor-pointer hover:underline">{item.attachment}</td>
-                    <td className="px-6 py-3 text-green-600 font-medium">{item.status}</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan="4" className="px-6 py-8 text-center text-gray-400">No resumes sent.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* RTR TABLE */}
-        {activeTab === 'rtr' && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
-            <div className="px-6 py-4 border-b border-gray-100">
-              <h2 className="text-lg font-semibold text-gray-800">RTR Tracking</h2>
-            </div>
-            <table className="w-full text-sm text-left whitespace-nowrap">
-              <thead className="bg-gray-50 text-gray-500 font-medium border-b">
-                <tr>
-                  <th className="px-6 py-3">Candidate</th>
-                  <th className="px-6 py-3">Role</th>
-                  <th className="px-6 py-3">Client</th>
-                  <th className="px-6 py-3">Vendor</th>
-                  <th className="px-6 py-3">Location</th>
-                  <th className="px-6 py-3">Rate</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {rtrList.length > 0 ? rtrList.map((item, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-3 font-medium text-gray-800">{item.candidate}</td>
-                    <td className="px-6 py-3 text-gray-600 truncate max-w-xs">{item.position}</td>
-                    <td className="px-6 py-3 text-blue-600">{item.client}</td>
-                    <td className="px-6 py-3 text-gray-500">{item.vendor}</td>
-                    <td className="px-6 py-3 text-gray-500">{item.location}</td>
-                    <td className="px-6 py-3 text-gray-800 font-mono">{item.rate}</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-400">No RTRs detected.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
       </main>
-      {/* DEBUG BADGE */}
-      {/* VERSION WATERMARK */}
-      {/* VERSION WATERMARK & LOAD MORE */}
-      <div className="fixed bottom-2 right-4 flex gap-2 items-center">
-        {stats.nextToken && (
-          <button
-            onClick={() => handleCollectData(stats.nextToken)}
-            disabled={loading}
-            className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 disabled:opacity-50 shadow-lg animate-pulse"
-          >
-            {loading ? 'Loading...' : 'Load Next Batch ⬇'}
-          </button>
-        )}
-        <div className={`text-xs font-mono px-2 py-1 rounded shadow border ${stats.limitReached ? 'bg-yellow-100 text-yellow-700 border-yellow-300' : 'bg-white/80 text-gray-500 border-gray-200'}`}>
-          v5.29 | Fetched: {stats.fetched || 0} | Inbox: {stats.inbox || 0} | Total Shown: {inboxList.length}
-        </div>
-      </div>
     </div>
   );
 }

@@ -77,9 +77,10 @@ app.get('/health', (req, res) => {
 });
 
 // Import Modules Safe Load
-let listAllUsers, getUserActivity, getImpersonatedClient;
+let listAllUsers, getUserActivity, getImpersonatedClient, getUserSentActivity;
 try {
     ({ listAllUsers, getUserActivity } = require('./src/workspace'));
+    ({ getUserSentActivity } = require('./src/sent_workspace'));
     ({ getImpersonatedClient } = require('./src/auth'));
 } catch (e) {
     console.error("CRITICAL: Failed to load modules:", e);
@@ -112,10 +113,12 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
     try {
         if (!getImpersonatedClient) throw new Error("Backend Module 'auth.js' failed to load.");
         if (!getUserActivity) throw new Error("Backend Module 'workspace.js' failed to load.");
+        if (!getUserSentActivity) throw new Error("Backend Module 'sent_workspace.js' failed to load.");
+
 
         console.log('Received request to collect data...');
-        const { startDate, endDate, targetEmail, pageToken } = req.body;
-        console.log(`[Collect] Request for ${targetEmail} | Start: ${startDate} | End: ${endDate}`);
+        const { startDate, endDate, targetEmail, pageToken, type = 'inbox' } = req.body; // Added 'type'
+        console.log(`[Collect] Request for ${targetEmail} | Start: ${startDate} | End: ${endDate} | Type: ${type}`);
 
         const ADMIN_EMAIL = 'hiring@innovcentric.com';
         const DOMAIN = 'innovcentric.com';
@@ -127,8 +130,11 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
         if (!targetEmail || targetEmail === 'Select User') {
             return res.json({ success: false, error: "Please select a user." });
         }
+        if (!targetEmail) {
+            return res.status(400).json({ error: "Missing targetEmail" });
+        }
 
-        console.log(`[API] Processing request for: ${targetEmail}`);
+        console.log(`[API] Processing request for: ${targetEmail} | Type: ${type}`);
 
         if (targetEmail === 'All Users' || targetEmail === 'all') {
             // 1. Get All Users
@@ -141,12 +147,23 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
                 try {
                     // Impersonate THIS user to access their data
                     const authClient = await getImpersonatedClient(user.primaryEmail);
-                    const acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
+
+                    // Route to Sent or Inbox
+                    let acts;
+                    if (type === 'sent') {
+                        acts = await getUserSentActivity(authClient, user.primaryEmail, startDate, endDate);
+                    } else {
+                        acts = await getUserActivity(authClient, user.primaryEmail, startDate, endDate);
+                    }
+
                     return {
                         employee_name: user.name.fullName,
                         employee_email: user.primaryEmail,
                         department: user.orgUnitPath || 'General',
-                        activities: acts
+                        activities: {
+                            items: acts,
+                            meta: acts.meta
+                        }
                     };
                 } catch (err) {
                     return {
@@ -161,11 +178,25 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             allData = results.filter(r => r !== null);
 
         } else {
-            // Paginated Single User
-            const authClient = await getImpersonatedClient(targetEmail);
-            const result = await getUserActivity(authClient, targetEmail, startDate, endDate, req.body.pageToken);
-            allData = result;
-            nextToken = result.meta?.nextToken;
+            // Single User (allData is array of emails)
+            try {
+                // Determine if we need to authenticate as admin or the user
+                // For simplicity in this demo, we use the Admin credentials impersonating the user
+                const authClient = await getImpersonatedClient(targetEmail);
+
+                let result;
+                // Route to Sent or Inbox
+                if (type === 'sent') {
+                    result = await getUserSentActivity(authClient, targetEmail, startDate, endDate, pageToken);
+                } else {
+                    result = await getUserActivity(authClient, targetEmail, startDate, endDate, pageToken);
+                }
+                allData = result;
+                nextToken = result.meta?.nextToken;
+            } catch (err) {
+                console.error(`Error fetching data for single user ${targetEmail}:`, err);
+                return res.status(500).json({ success: false, error: formatError(err) });
+            }
         }
 
         // Calculate Stats
@@ -194,7 +225,7 @@ app.post('/collect-data', verifyGoogleToken, async (req, res) => {
             total: allData.meta?.total // Pass total estimate through
         };
 
-        res.json({ success: true, version: "v5.15", stats, data: allData });
+        res.json({ success: true, version: "v5.50", stats, data: allData });
 
     } catch (error) {
         console.error('Error collecting data:', error);
@@ -220,6 +251,7 @@ app.get('/debug/source', (req, res) => {
 });
 
 app.listen(PORT, () => {
+    console.log(`Booting innovcentric-hub backend v5.54 (Secure Mode)...`);
     console.log(`Server listening on port ${PORT}`);
-    console.log("Verification: v5.19 Online (Debug Source Route Active)");
+    console.log(`Verification: v5.54 Online (Auth Active)`);
 });
